@@ -19,22 +19,18 @@ FRAME_HEIGHT = 256
 BLOCK_SIZE = 2
 FRAME_SIZE_BYTES = FRAME_WIDTH * FRAME_HEIGHT * 3
 
+DEVICE_NAME = "tuna"
+
 import os
 import fcntl
 import struct
-
-# INIT
-# sudo ip tuntap add dev tun0 mode tun user jawa
-# sudo ip addr add 10.10.42.2/24 dev tun0
-# sudo ip link set dev tun0 mtu 1400
-# sudo ip link set dev tun0 up
 
 TUNSETIFF = 0x400454ca
 IFF_TUN = 0x0001
 IFF_NO_PI = 0x1000
 
 tun = os.open("/dev/net/tun", os.O_RDWR)
-ifr = struct.pack('16sH', b'tun0', IFF_TUN | IFF_NO_PI)
+ifr = struct.pack('16sH', DEVICE_NAME.encode("ascii"), IFF_TUN | IFF_NO_PI)
 fcntl.ioctl(tun, TUNSETIFF, ifr)
 os.set_blocking(tun, False)
 
@@ -236,9 +232,14 @@ async def main():
         await asyncio.gather(browser_task, iptun_task)
     finally:
         loop.remove_reader(tun)
-        for task in (browser_task, iptun_task):
-            if not task.done():
-                task.cancel()
+        try:
+            async with asyncio.timeout(5):
+                await browser_task
+                await iptun_task
+        except asyncio.TimeoutError:
+            for task in (browser_task, iptun_task):
+                if not task.done():
+                    task.cancel()
         await asyncio.gather(browser_task, iptun_task, return_exceptions=True)
         await runner.cleanup()
 
