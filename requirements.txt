@@ -1,3 +1,4 @@
 aiohttp
 NumPy
 playwright
+uvloop
