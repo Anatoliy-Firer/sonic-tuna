@@ -1,6 +1,8 @@
 import asyncio
+import contextlib
+import traceback
+from urllib.parse import parse_qs
 
-import cv2
 import numpy as np
 from aiohttp import web
 from playwright.async_api import async_playwright, Page, TimeoutError
@@ -32,13 +34,11 @@ fcntl.ioctl(tun, TUNSETIFF, ifr)
 os.set_blocking(tun, False)
 
 
-def process_incoming_frame(frame_bytes: bytes):
+def process_incoming_frame(frame_bytes: bytes, source_id: str):
     if len(frame_bytes) != FRAME_SIZE_BYTES:
         return
 
     img = np.frombuffer(frame_bytes, dtype=np.uint8).reshape((FRAME_HEIGHT, FRAME_WIDTH, 3))
-    cv2.imshow("received-frame", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-    cv2.waitKey(1)
 
     msg = encoder.decode(img)
     if msg is not None:
@@ -77,6 +77,7 @@ async def frame_stream(request):
 
 ip_queue = asyncio.Queue()
 
+
 def read_ippack():
     try:
         line = os.read(tun, 2048)
@@ -97,11 +98,12 @@ async def iptun_to_frames():
 async def incoming_frames(request):
     ws = web.WebSocketResponse(max_msg_size=FRAME_SIZE_BYTES + 1024)
     await ws.prepare(request)
+    source_id = parse_qs(request.rel_url.query_string).get("source_id", ["unknown"])[0]
 
     try:
         async for msg in ws:
             if msg.type == web.WSMsgType.BINARY:
-                process_incoming_frame(msg.data)
+                process_incoming_frame(msg.data, source_id)
     finally:
         await ws.close()
 
@@ -128,12 +130,6 @@ async def work_with_page(page: Page):
           {fin.read()}  
         }})();
         """
-    with open('check_cams.js', 'r') as fin:
-        check_cams_js = f"""
-        () => {{
-          {fin.read()}  
-        }};
-        """
 
     # page.on("console", lambda msg: print("BROWSER LOG:", msg.text))
 
@@ -154,7 +150,6 @@ async def work_with_page(page: Page):
     await but_connect.wait_for()
     await but_connect.click()
 
-    await page.wait_for_function(check_cams_js, timeout=60000)
     await page.evaluate(rtc_client_js)
 
 
@@ -162,6 +157,7 @@ async def start_browser():
     async with async_playwright() as p:
         page = None
         browser = None
+        context = None
         try:
             with open('camera_bridge.js', 'r') as fin:
                 camera_bridge_js = fin.read()
@@ -185,14 +181,20 @@ async def start_browser():
             await work_with_page(page)
             # держим браузер живым
             await asyncio.Event().wait()
-        except Exception as e:
-            print(e)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            traceback.print_exc()
         finally:
             if page is not None:
-                await page.close()
+                with contextlib.suppress(Exception):
+                    await page.close()
+            if context is not None:
+                with contextlib.suppress(Exception):
+                    await context.close()
             if browser is not None:
-                await browser.close()
-            exit(0)
+                with contextlib.suppress(Exception):
+                    await browser.close()
 
 
 async def main():
@@ -206,11 +208,20 @@ async def main():
     site = web.TCPSite(runner, 'localhost', 8000)
     await site.start()
 
-    asyncio.create_task(start_browser())
-    asyncio.create_task(iptun_to_frames())
-    asyncio.get_event_loop().add_reader(tun, read_ippack)
+    browser_task = asyncio.create_task(start_browser(), name="start_browser")
+    iptun_task = asyncio.create_task(iptun_to_frames(), name="iptun_to_frames")
+    loop = asyncio.get_running_loop()
+    loop.add_reader(tun, read_ippack)
 
-    await asyncio.Event().wait()
+    try:
+        await asyncio.gather(browser_task, iptun_task)
+    finally:
+        loop.remove_reader(tun)
+        for task in (browser_task, iptun_task):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(browser_task, iptun_task, return_exceptions=True)
+        await runner.cleanup()
 
 
 if __name__ == '__main__':
