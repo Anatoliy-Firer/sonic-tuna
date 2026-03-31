@@ -1,5 +1,6 @@
-import numpy as np
 import struct
+
+import numpy as np
 
 # Магическое число для дополнительной валидации (4 байта)
 MAGIC_HEADER = b'DATA'
