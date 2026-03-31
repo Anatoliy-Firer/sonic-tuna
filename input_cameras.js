@@ -1,27 +1,26 @@
-const WIDTH = 256;
-const HEIGHT = 256;
-const WS_URL = "ws://localhost:8000/incoming-frames";
+const WIDTH = 64;
+const HEIGHT = 64;
+
 const SCAN_INTERVAL_MS = 1000;
 
-function hasVisiblePixel(rgbaBytes) {
-    for (let index = 0; index < rgbaBytes.length; index += 4) {
-        if (rgbaBytes[index] !== 0 || rgbaBytes[index + 1] !== 0 || rgbaBytes[index + 2] !== 0) {
-            return true;
+function fillRgbFromRgba(rgbaBytes, rgbBytes) {
+    let hasVisiblePixel = false;
+
+    for (let src = 0, dst = 0; src < rgbaBytes.length; src += 4, dst += 3) {
+        const red = rgbaBytes[src];
+        const green = rgbaBytes[src + 1];
+        const blue = rgbaBytes[src + 2];
+
+        rgbBytes[dst] = red;
+        rgbBytes[dst + 1] = green;
+        rgbBytes[dst + 2] = blue;
+
+        if (!hasVisiblePixel && (red !== 0 || green !== 0 || blue !== 0)) {
+            hasVisiblePixel = true;
         }
     }
 
-    return false;
-}
-
-function rgbFromRgba(rgbaBytes) {
-    const rgbBytes = new Uint8Array(WIDTH * HEIGHT * 3);
-    for (let src = 0, dst = 0; src < rgbaBytes.length; src += 4, dst += 3) {
-        rgbBytes[dst] = rgbaBytes[src];
-        rgbBytes[dst + 1] = rgbaBytes[src + 1];
-        rgbBytes[dst + 2] = rgbaBytes[src + 2];
-    }
-
-    return rgbBytes;
+    return hasVisiblePixel;
 }
 
 function getRemoteVideoEntries() {
@@ -54,39 +53,23 @@ function getRemoteVideoEntries() {
     return entries;
 }
 
-async function openSocket(sourceId, abortSignal) {
-    return await new Promise((resolve, reject) => {
-        if (abortSignal.aborted) {
-            reject(new DOMException("Capture aborted", "AbortError"));
-            return;
-        }
+function getFrameBridge() {
+    const bridge = globalThis.__sonicTunaFrameBridge;
+    if (!bridge || typeof bridge.sendFrame !== "function") {
+        throw new Error("Shared frame bridge is unavailable");
+    }
 
-        const socket = new WebSocket(`${WS_URL}?source_id=${encodeURIComponent(sourceId)}`);
-        socket.binaryType = "arraybuffer";
-
-        const abortHandler = () => {
-            socket.close();
-            reject(new DOMException("Capture aborted", "AbortError"));
-        };
-
-        abortSignal.addEventListener("abort", abortHandler, {once: true});
-        socket.onopen = () => {
-            abortSignal.removeEventListener("abort", abortHandler);
-            resolve(socket);
-        };
-        socket.onerror = () => {
-            abortSignal.removeEventListener("abort", abortHandler);
-            reject(new Error(`WebSocket connection failed for ${sourceId}`));
-        };
-    });
+    return bridge;
 }
 
 async function streamRemoteVideo(entry, abortController) {
-    const socket = await openSocket(entry.sourceId, abortController.signal);
+    const frameBridge = getFrameBridge();
     const processor = new MediaStreamTrackProcessor({track: entry.track});
     const reader = processor.readable.getReader();
     const canvas = new OffscreenCanvas(WIDTH, HEIGHT);
     const ctx = canvas.getContext("2d", {willReadFrequently: true});
+    ctx.imageSmoothingEnabled = false;
+    const rgbBytes = new Uint8Array(WIDTH * HEIGHT * 3);
 
     const stopReader = async () => {
         try {
@@ -98,9 +81,6 @@ async function streamRemoteVideo(entry, abortController) {
     entry.track.addEventListener("ended", () => abortController.abort(), {once: true});
     abortController.signal.addEventListener("abort", () => {
         stopReader();
-        if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
-            socket.close();
-        }
     }, {once: true});
 
     while (!abortController.signal.aborted) {
@@ -112,13 +92,10 @@ async function streamRemoteVideo(entry, abortController) {
         try {
             ctx.drawImage(frame, 0, 0, WIDTH, HEIGHT);
             const rgbaBytes = ctx.getImageData(0, 0, WIDTH, HEIGHT).data;
-            if (!hasVisiblePixel(rgbaBytes)) {
+            if (!fillRgbFromRgba(rgbaBytes, rgbBytes)) {
                 continue;
             }
-
-            if (socket.readyState === WebSocket.OPEN) {
-                socket.send(rgbFromRgba(rgbaBytes));
-            }
+            frameBridge.sendFrame(rgbBytes);
         } finally {
             frame.close();
         }

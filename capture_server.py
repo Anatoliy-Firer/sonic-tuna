@@ -5,7 +5,6 @@ uvloop.install()
 import asyncio
 import contextlib
 import traceback
-from urllib.parse import parse_qs
 
 import numpy as np
 from aiohttp import web
@@ -13,11 +12,21 @@ from playwright.async_api import async_playwright, Page, TimeoutError
 
 import encoder
 
+
+def next_power_of_2(n):
+    if n <= 0:
+        return 1
+    return 1 << (n - 1).bit_length()
+
+
 frame_clients = set()
-FRAME_WIDTH = 256
-FRAME_HEIGHT = 256
-BLOCK_SIZE = 2
+FRAME_WIDTH = 64
+FRAME_HEIGHT = 64
+BLOCK_SIZE = 1
 FRAME_SIZE_BYTES = FRAME_WIDTH * FRAME_HEIGHT * 3
+DATA_SIZE_BYTES = next_power_of_2(FRAME_SIZE_BYTES // (8 * BLOCK_SIZE * BLOCK_SIZE))
+
+print(f"DATA_SIZE_BYTES: {DATA_SIZE_BYTES}")
 
 DEVICE_NAME = "tuna"
 
@@ -35,13 +44,13 @@ fcntl.ioctl(tun, TUNSETIFF, ifr)
 os.set_blocking(tun, False)
 
 
-def process_incoming_frame(frame_bytes: bytes, source_id: str):
+def process_incoming_frame(frame_bytes: bytes):
     if len(frame_bytes) != FRAME_SIZE_BYTES:
         return
 
     img = np.frombuffer(frame_bytes, dtype=np.uint8).reshape((FRAME_HEIGHT, FRAME_WIDTH, 3))
 
-    msg = encoder.decode(img, block_size=BLOCK_SIZE)
+    msg = encoder.decode(img, width=FRAME_WIDTH, height=FRAME_HEIGHT, block_size=BLOCK_SIZE, border_size=BLOCK_SIZE)
     if msg is not None:
         os.write(tun, msg)
 
@@ -62,16 +71,18 @@ async def broadcast_frame(frame_bytes: bytes):
 
 
 async def frame_stream(request):
-    ws = web.WebSocketResponse()
+    ws = web.WebSocketResponse(max_msg_size=FRAME_SIZE_BYTES + 1024)
     await ws.prepare(request)
 
     frame_clients.add(ws)
 
     try:
-        async for _ in ws:
-            pass
+        async for msg in ws:
+            if msg.type == web.WSMsgType.BINARY:
+                process_incoming_frame(msg.data)
     finally:
         frame_clients.discard(ws)
+        await ws.close()
 
     return ws
 
@@ -81,7 +92,7 @@ ip_queue = asyncio.Queue()
 
 def read_ippack():
     try:
-        line = os.read(tun, 2048)
+        line = os.read(tun, DATA_SIZE_BYTES)
         ip_queue.put_nowait(line)
     except EOFError as err:
         print(err)
@@ -92,23 +103,9 @@ async def iptun_to_frames():
     while True:
         line = await ip_queue.get()
         payload = np.frombuffer(line, dtype=np.uint8)
-        frame = encoder.encode(payload, block_size=BLOCK_SIZE)
+        frame = encoder.encode(payload, width=FRAME_WIDTH, height=FRAME_HEIGHT, block_size=BLOCK_SIZE,
+                               border_size=BLOCK_SIZE)
         await broadcast_frame(frame.tobytes())
-
-
-async def incoming_frames(request):
-    ws = web.WebSocketResponse(max_msg_size=FRAME_SIZE_BYTES + 1024)
-    await ws.prepare(request)
-    source_id = parse_qs(request.rel_url.query_string).get("source_id", ["unknown"])[0]
-
-    try:
-        async for msg in ws:
-            if msg.type == web.WSMsgType.BINARY:
-                process_incoming_frame(msg.data, source_id)
-    finally:
-        await ws.close()
-
-    return ws
 
 
 async def handle_route(route):
@@ -130,7 +127,7 @@ async def handle_route(route):
 
 
 async def work_with_page(page: Page):
-    with open('up_webrtc.js', 'r') as fin:
+    with open('input_cameras.js', 'r') as fin:
         rtc_client_js = f"""
         (async () => {{
           {fin.read()}  
@@ -157,6 +154,7 @@ async def work_with_page(page: Page):
     await but_connect.click()
 
     await page.evaluate(rtc_client_js)
+    print("BROWSER STARTED")
 
 
 async def start_browser():
@@ -215,7 +213,6 @@ async def start_browser():
 async def main():
     app = web.Application()
     app.router.add_get("/frame-stream", frame_stream)
-    app.router.add_get("/incoming-frames", incoming_frames)
 
     runner = web.AppRunner(app)
     await runner.setup()
