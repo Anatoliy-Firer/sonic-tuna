@@ -1,9 +1,13 @@
 ([WIDTH, HEIGHT]) => {
 
     const SCAN_INTERVAL_MS = 1000;
+    const FRAME_SIGNATURE_THRESHOLD = 150;
 
     function fillRgbFromRgba(rgbaBytes, rgbBytes) {
-        let hasVisiblePixel = false;
+        let topGreenSum = 0;
+        let bottomRedSum = 0;
+        const topRowEnd = WIDTH * 4;
+        const bottomRowStart = (HEIGHT - 1) * WIDTH * 4;
 
         for (let src = 0, dst = 0; src < rgbaBytes.length; src += 4, dst += 3) {
             const red = rgbaBytes[src];
@@ -14,12 +18,19 @@
             rgbBytes[dst + 1] = green;
             rgbBytes[dst + 2] = blue;
 
-            if (!hasVisiblePixel && (red !== 0 || green !== 0 || blue !== 0)) {
-                hasVisiblePixel = true;
+            if (src < topRowEnd) {
+                topGreenSum += green;
+            }
+
+            if (src >= bottomRowStart) {
+                bottomRedSum += red;
             }
         }
 
-        return hasVisiblePixel;
+        const topGreenMean = topGreenSum / WIDTH;
+        const bottomRedMean = bottomRedSum / WIDTH;
+
+        return topGreenMean >= FRAME_SIGNATURE_THRESHOLD && bottomRedMean >= FRAME_SIGNATURE_THRESHOLD;
     }
 
     function getRemoteVideoEntries() {

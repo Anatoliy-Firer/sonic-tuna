@@ -3,6 +3,7 @@ from contextlib import AbstractContextManager
 import asyncio
 import contextlib
 import traceback
+import getpass
 
 from playwright.async_api import async_playwright, Page, TimeoutError
 
@@ -12,13 +13,14 @@ class Browser(AbstractContextManager):
     def __exit__(self, exc_type, exc_value, traceback, /):
         pass
 
-    def __init__(self, port: int, frame_w, frame_h, scale, fps: int, call_url: str):
+    def __init__(self, port: int, frame_w, frame_h, scale, fps: int, call_url: str, user: str = None):
         self.__port = port
         self.__frame_w = frame_w
         self.__frame_h = frame_h
         self.__scale = scale
         self.__fps = fps
         self.__call_url = call_url
+        self.__user = user or getpass.getuser()
 
     async def start_browser(self, headless: bool = True):
         async with async_playwright() as p:
@@ -91,13 +93,25 @@ class Browser(AbstractContextManager):
             but_continue = page.get_by_text("Продолжить в браузере")
             await but_continue.wait_for(timeout=3000)
             await but_continue.click()
-        except TimeoutError:
+        except:
+            pass
+        try:
+            input_user = page.locator('input[value="Гость"]')
+            await input_user.wait_for(timeout=3000)
+            await input_user.fill(self.__user)
+        except:
+            pass
+
+        try:
+            allow_cookies = page.locator('div[id="gdpr-popup-v3-button-mandatory"]')
+            await allow_cookies.wait_for(timeout=3000)
+            await allow_cookies.nth(0).click()
+        except:
             pass
 
         but_mic = page.get_by_title("Выключить микрофон")
         await but_mic.wait_for()
         await but_mic.click()
-
         but_connect = page.get_by_text("Подключиться")
         await but_connect.wait_for()
         await but_connect.click()

@@ -23,7 +23,7 @@ async def ws_to_tun(tunnel: Tunnel, ws: WebSocketServer, w: int, h: int):
 
 
 async def main(args: argparse.Namespace):
-    browser = Browser(args.port, args.frame_width, args.frame_height, args.frame_scale, args.fps, args.call_url)
+    browser = Browser(args.port, args.frame_width, args.frame_height, args.frame_scale, args.fps, args.call_url, args.user)
     tunnel = Tunnel(args.device, args.mtu)
     websocket = WebSocketServer(args.frame_width * args.frame_height * 3, args.port)
 
@@ -63,5 +63,6 @@ if __name__ == '__main__':
     parser.add_argument("-p", "--port", type=int, default=8042, help="Internal websocket port")
     parser.add_argument("--mtu", type=int, default=1400, help="MTU")
     parser.add_argument("--show-gui", action='store_true', help="Show chromium GUI")
+    parser.add_argument("--user", type=str, default=None, help="Username at Yandex Telemost conference. Default is current system user")
 
     uvloop.run(main(parser.parse_args()))
