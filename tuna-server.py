@@ -35,7 +35,7 @@ def deserialize_arrays(buffer):
 
 async def tun_to_ws(tunnel: Tunnel, ws: WebSocketServer, w: int, h: int, fps: int):
     __max_size = (w - 2) * (h - 2) * 3 // 8 - 8  # максимальная длина массива байт, принимаемого функцией encoder.encode
-    __timeout = 1.0 / (fps + 1)
+    __timeout = 1.0 / fps
 
     predicate = lambda count, length: length + count * 8 < __max_size
 

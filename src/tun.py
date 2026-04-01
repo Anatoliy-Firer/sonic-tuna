@@ -23,10 +23,7 @@ class Tunnel(AbstractContextManager):
         loop = asyncio.get_running_loop()
         ip_queue = asyncio.Queue()
 
-        def read_ippack():
-            ip_queue.put_nowait(os.read(self.__tun, self.__buffer_size))
-
-        loop.add_reader(self.__tun, read_ippack)
+        loop.add_reader(self.__tun, lambda: ip_queue.put_nowait(os.read(self.__tun, self.__buffer_size)))
 
         return ip_queue
 
