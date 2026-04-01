@@ -17,7 +17,7 @@ const ctx = canvas.getContext("2d", {alpha: false});
 const sourceCtx = sourceCanvas.getContext("2d", {alpha: false});
 ctx.imageSmoothingEnabled = false;
 sourceCtx.imageSmoothingEnabled = false;
-const stream = canvas.captureStream(FPS);
+const stream = canvas.captureStream(0);
 const [videoTrack] = stream.getVideoTracks();
 const frameQueue = [];
 const outgoingFrameQueue = [];
@@ -28,7 +28,7 @@ let color_countdown = 0;
 let emptyFrameAngle = 0.0;
 
 function drawEmptyFrame() {
-    if (color_countdown == 0) {
+    if (color_countdown === 0) {
         const red = Math.round(((Math.cos(emptyFrameAngle) + 1) / 2) * 255);
         const blue = Math.round(((Math.sin(emptyFrameAngle) + 1) / 2) * 255);
         color = `rgb(${red} 0 ${blue})`;
@@ -41,6 +41,7 @@ function drawEmptyFrame() {
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
     ctx.fillStyle = '#ffffff';
     ctx.fillText("SONIC TUNA RULES!", 10, 10);
+    videoTrack.requestFrame?.();
 }
 
 function drawFrame(rgbBytes) {
@@ -57,6 +58,7 @@ function drawFrame(rgbBytes) {
 
     sourceCtx.putImageData(imageData, 0, 0);
     ctx.drawImage(sourceCanvas, 0, 0, WIDTH, HEIGHT);
+    videoTrack.requestFrame?.();
 }
 
 function tick() {

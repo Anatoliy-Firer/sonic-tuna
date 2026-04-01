@@ -58,8 +58,8 @@ if __name__ == '__main__':
     parser.add_argument("--call-url", type=str, default="https://telemost.yandex.ru/j/71720776790697",
                         help="Yandex Telemost conference url")
     parser.add_argument("--frame-height", type=int, default=64, help="Frame height")
-    parser.add_argument("--frame-scale", type=int, default=4, help="Frame scale")
-    parser.add_argument("--fps", type=int, default=30, help="Frame rate")
+    parser.add_argument("--frame-scale", type=int, default=8, help="Frame scale")
+    parser.add_argument("--fps", type=int, default=20, help="Frame rate")
     parser.add_argument("-p", "--port", type=int, default=8042, help="Internal websocket port")
     parser.add_argument("--mtu", type=int, default=1400, help="MTU")
     parser.add_argument("--show-gui", action='store_true', help="Show chromium GUI")

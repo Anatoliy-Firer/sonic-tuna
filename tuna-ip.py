@@ -5,8 +5,11 @@ import pwd
 import shutil
 import subprocess
 
+AUTO_NAT_DEVICE = "__auto_nat_device__"
+
 
 def run_command(command, check=True):
+    print(f'[#] {" ".join(command)}')
     result = subprocess.run(command, capture_output=True, text=True)
     if check and result.returncode != 0:
         error_text = result.stderr.strip() or result.stdout.strip() or "unknown error"
@@ -20,6 +23,18 @@ def get_interfaces():
 
     interfaces = [iface["ifname"] for iface in data]
     return set(interfaces)
+
+
+def get_default_route_device():
+    result = run_command(["ip", "-j", "route", "show", "default"])
+    routes = json.loads(result.stdout)
+
+    for route in routes:
+        device = route.get("dev")
+        if device:
+            return device
+
+    raise RuntimeError("Could not detect default network interface from routing table")
 
 
 def user_exists(username):
@@ -59,6 +74,12 @@ def validate_gateway_address(interface_address, gateway_address):
         raise RuntimeError(
             f"Gateway {gateway_address} is not in subnet {network} from address {interface_address}"
         )
+
+
+def normalize_interface_address(address):
+    if "/" not in address:
+        return f"{address}/24"
+    return address
 
 
 def get_user_rule_pref(route_table):
@@ -287,29 +308,17 @@ def main():
     up_parser.add_argument(
         "--nat",
         nargs="?",
-        const="eth0",
-        help="Configure NAT for traffic from tuna to this device, default eth0",
+        const=AUTO_NAT_DEVICE,
+        help="Configure NAT for traffic from tuna to this device, default is the current default-route interface",
     )
     up_parser.add_argument("--mtu", type=int, default=1400, help="MTU size")
-    up_parser.add_argument("--route-table", type=int, default=8082, help="Route table and fwmark value. Used by gateway")
+    up_parser.add_argument("--route-table", type=int, default=8042,
+                           help="Route table and fwmark value. Used by gateway")
 
     down_parser = subparsers.add_parser("down", help="Turn off and remove interface")
     down_parser.add_argument("-d", "--device", type=str, default="tuna", help="Interface name")
     down_parser.add_argument("-u", "--user", type=str, default="sonic-tuna", help="System user, owner of interface")
-    down_parser.add_argument(
-        "-п",
-        "--gateway",
-        nargs="?",
-        const="cleanup",
-        help="Remove gateway routing and nftables rules",
-    )
-    down_parser.add_argument(
-        "--nat",
-        nargs="?",
-        const="eth0",
-        help="Remove NAT rules for traffic from tuna to this device",
-    )
-    down_parser.add_argument("--route-table", type=int, default=8082, help="Route table and fwmark value")
+    down_parser.add_argument("--route-table", type=int, default=8042, help="Route table and fwmark value")
 
     args = parser.parse_args()
 
@@ -323,6 +332,7 @@ def main():
         if not args.address:
             up_parser.print_help()
             return
+        args.address = normalize_interface_address(args.address)
         try:
             interface_network = ipaddress.ip_interface(args.address)
         except ValueError:
@@ -354,6 +364,13 @@ def main():
             except RuntimeError as error:
                 print(error)
                 return
+        if args.nat == AUTO_NAT_DEVICE:
+            try:
+                args.nat = get_default_route_device()
+                print(f"Device {args.nat} used as default route device")
+            except RuntimeError as error:
+                print(error)
+                return
 
         try:
             run_command(["sudo", "ip", "tuntap", "add", "dev", args.device, "mode", "tun", "user", args.user])
@@ -371,10 +388,8 @@ def main():
 
     elif args.command == "down":
         try:
-            if args.gateway:
-                cleanup_gateway(args.route_table, args.user)
-            if args.nat:
-                cleanup_nat(args.route_table)
+            cleanup_gateway(args.route_table, args.user)
+            cleanup_nat(args.route_table)
             run_command(["sudo", "ip", "link", "delete", args.device])
         except RuntimeError as error:
             print(error)
