@@ -12,23 +12,25 @@ from src.util.batch_generator import chunk_from_queue
 from src.ws_server import WebSocketServer
 
 
+_PACKET_SIZE = struct.Struct("I")
+
+
 def serialize_arrays(arrays):
-    packed = b""
+    packed = bytearray()
     for arr in arrays:
-        packed += struct.pack("I", len(arr)) + arr
+        packed.extend(_PACKET_SIZE.pack(len(arr)))
+        packed.extend(arr)
     return packed
 
 
 def deserialize_arrays(buffer):
-    arrays = []
+    view = memoryview(buffer)
     offset = 0
-    while offset < len(buffer):
-        size = struct.unpack_from("I", buffer, offset)[0]
-        offset += 4
-        arr = np.frombuffer(buffer, dtype=np.uint8, count=size, offset=offset)
-        arrays.append(arr.tobytes())
+    while offset < len(view):
+        size = _PACKET_SIZE.unpack_from(view, offset)[0]
+        offset += _PACKET_SIZE.size
+        yield view[offset:offset + size]
         offset += size
-    return arrays
 
 
 async def tun_to_ws(tunnel: Tunnel, ws: WebSocketServer, w: int, h: int, fps: int):

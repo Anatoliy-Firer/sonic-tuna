@@ -30,7 +30,7 @@ class Tunnel(AbstractContextManager):
 
         return ip_queue
 
-    def push_package(self, data: bytes):
+    def push_package(self, data):
         try:
             os.write(self.__tun, data)
         except OSError as err:
