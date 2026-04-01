@@ -33,20 +33,20 @@ def deserialize_arrays(buffer):
         offset += size
 
 
-async def tun_to_ws(tunnel: Tunnel, ws: WebSocketServer, w: int, h: int, fps: int):
-    __max_size = (w - 2) * (h - 2) * 3 * 2 // 8 - 8  # максимальная длина массива байт, принимаемого функцией encoder.encode
+async def tun_to_ws(tunnel: Tunnel, ws: WebSocketServer, w: int, h: int, fps: int, density: int):
+    __max_size = (w - 2) * (h - 2) * 3 * density // 8 - 8  # максимальная длина массива байт, принимаемого функцией encoder.encode
     __timeout = 1.0 / fps
 
     predicate = lambda count, length: length + count * 8 < __max_size
 
     async for packs in chunk_from_queue(tunnel.packages(), predicate, __timeout):
-        encoded = encoder.encode(np.frombuffer(serialize_arrays(packs), dtype=np.uint8), w, h, 1, 2)
+        encoded = encoder.encode(np.frombuffer(serialize_arrays(packs), dtype=np.uint8), w, h, 1, density)
         await ws.push_frame(encoded.tobytes())
 
 
-async def ws_to_tun(tunnel: Tunnel, ws: WebSocketServer, w: int, h: int):
+async def ws_to_tun(tunnel: Tunnel, ws: WebSocketServer, w: int, h: int,  density: int):
     async for frame in ws.frames():
-        decoded = encoder.decode(np.frombuffer(frame, dtype=np.uint8).reshape((w, h, 3)), w, h, 1, 2)
+        decoded = encoder.decode(np.frombuffer(frame, dtype=np.uint8).reshape((w, h, 3)), w, h, 1, density)
         if decoded is not None:
             try:
                 for pack in deserialize_arrays(decoded):
@@ -66,8 +66,8 @@ async def main(args: argparse.Namespace):
     ws_server = asyncio.create_task(websocket.start())
 
     browser_task = asyncio.create_task(browser.start_browser(not args.show_gui))
-    tun_to_ws_task = asyncio.create_task(tun_to_ws(tunnel, websocket, args.frame_width, args.frame_height, args.fps))
-    ws_to_tun_task = asyncio.create_task(ws_to_tun(tunnel, websocket, args.frame_width, args.frame_height))
+    tun_to_ws_task = asyncio.create_task(tun_to_ws(tunnel, websocket, args.frame_width, args.frame_height, args.fps, args.frame_density))
+    ws_to_tun_task = asyncio.create_task(ws_to_tun(tunnel, websocket, args.frame_width, args.frame_height, args.frame_density))
 
     try:
         await asyncio.gather(browser_task, tun_to_ws_task, ws_to_tun_task)
@@ -95,6 +95,7 @@ if __name__ == '__main__':
                         help="Yandex Telemost conference url")
     parser.add_argument("--frame-height", type=int, default=64, help="Frame height")
     parser.add_argument("--frame-scale", type=int, default=8, help="Frame scale")
+    parser.add_argument("--frame-density", type=int, default=1, help="Amount bits per pixel")
     parser.add_argument("--fps", type=int, default=20, help="Frame rate")
     parser.add_argument("-p", "--port", type=int, default=8042, help="Internal websocket port")
     parser.add_argument("--mtu", type=int, default=1400, help="MTU")
