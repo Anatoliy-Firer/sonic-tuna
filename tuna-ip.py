@@ -17,12 +17,13 @@ def run_command(command, check=True):
     return result
 
 
-def get_interfaces():
-    result = run_command(["ip", "-j", "addr"])
-    data = json.loads(result.stdout)
-
-    interfaces = [iface["ifname"] for iface in data]
-    return set(interfaces)
+def run_command_with_input(command, input_text, check=True):
+    print(f'[#] {" ".join(command)}')
+    result = subprocess.run(command, input=input_text, capture_output=True, text=True)
+    if check and result.returncode != 0:
+        error_text = result.stderr.strip() or result.stdout.strip() or "unknown error"
+        raise RuntimeError(f"Command failed: {' '.join(command)}: {error_text}")
+    return result
 
 
 def get_default_route_device():
@@ -50,12 +51,8 @@ def create_system_user(username):
     return run_command(["sudo", "useradd", "-M", "-s", nologin_shell, username], check=False)
 
 
-def get_nat_filter_table_name(route_table):
-    return f"tuna_nat_filter_{route_table}"
-
-
-def get_nat_postrouting_table_name(route_table):
-    return f"tuna_nat_postrouting_{route_table}"
+def get_nat_table_name(route_table):
+    return f"tuna_nat_{route_table}"
 
 
 def validate_args(args):
@@ -110,43 +107,41 @@ def cleanup_gateway(route_table, username=None):
             "not", "uidrange", f"{user_uid}-{user_uid}", "lookup", str(route_table),
         ], check=False, )
     run_command(["sudo", "ip", "route", "flush", "table", str(route_table)], check=False)
+
+
 def configure_nat(device, nat_device, subnet, route_table):
-    nat_filter_table = get_nat_filter_table_name(route_table)
-    nat_postrouting_table = get_nat_postrouting_table_name(route_table)
+    nat_table = get_nat_table_name(route_table)
 
     run_command(["sudo", "sysctl", "-w", "net.ipv4.ip_forward=1"])
+    run_command(["sudo", "nft", "delete", "table", "ip", nat_table], check=False)
+    ruleset = f"""table ip {nat_table} {{
+    chain forward {{
+        type filter hook forward priority filter; policy accept;
+        iifname "{device}" oifname "{nat_device}" accept
+        iifname "{nat_device}" oifname "{device}" ct state related,established accept
+    }}
 
-    run_command(["sudo", "nft", "add", "table", "inet", nat_filter_table], check=False)
-    run_command([
-        "sudo", "nft", "add", "chain", "inet", nat_filter_table, "forward",
-        "{ type filter hook forward priority filter; policy accept; }",
-    ], check=False, )
-    run_command(["sudo", "nft", "flush", "chain", "inet", nat_filter_table, "forward"])
-    run_command([
-        "sudo", "nft", "add", "rule", "inet", nat_filter_table,
-        "forward", "iifname", device, "oifname", nat_device, "accept",
-    ])
-    run_command([
-        "sudo", "nft", "add", "rule", "inet", nat_filter_table, "forward", "iifname",
-        nat_device, "oifname", device, "ct", "state", "related,established", "accept",
-    ])
-
-    run_command(["sudo", "nft", "add", "table", "ip", nat_postrouting_table], check=False)
-    run_command([
-        "sudo", "nft", "add", "chain", "ip", nat_postrouting_table, "postrouting",
-        "{ type nat hook postrouting priority srcnat; policy accept; }",
-    ], check=False, )
-    run_command(["sudo", "nft", "flush", "chain", "ip", nat_postrouting_table, "postrouting"])
-    run_command([
-        "sudo", "nft", "add", "rule", "ip", nat_postrouting_table,
-        "postrouting", "oifname", nat_device, "ip", "saddr",
-        subnet, "masquerade",
-    ])
+    chain postrouting {{
+        type nat hook postrouting priority srcnat; policy accept;
+        oifname "{nat_device}" ip saddr {subnet} masquerade
+    }}
+}}
+"""
+    run_command_with_input(["sudo", "nft", "-f", "-"], ruleset)
 
 
 def cleanup_nat(route_table):
-    run_command(["sudo", "nft", "delete", "table", "inet", get_nat_filter_table_name(route_table)], check=False)
-    run_command(["sudo", "nft", "delete", "table", "ip", get_nat_postrouting_table_name(route_table)], check=False)
+    run_command(["sudo", "nft", "delete", "table", "ip", get_nat_table_name(route_table)], check=False)
+
+
+def cleanup_interface(device):
+    run_command(["sudo", "ip", "link", "delete", device], check=False)
+
+
+def cleanup_up_state(device, route_table, username):
+    cleanup_gateway(route_table, username)
+    cleanup_nat(route_table)
+    cleanup_interface(device)
 
 
 def main():
@@ -193,9 +188,6 @@ def main():
         except ValueError:
             print(f"Invalid interface address: {args.address}")
             return
-        if args.device in get_interfaces():
-            print(f"Interface {args.device} already exists")
-            return
         if not user_exists(args.user):
             if args.create_user:
                 create_result = create_system_user(args.user)
@@ -228,6 +220,7 @@ def main():
                 return
 
         try:
+            cleanup_up_state(args.device, args.route_table, args.user)
             run_command(["sudo", "ip", "tuntap", "add", "dev", args.device, "mode", "tun", "user", args.user])
             run_command(["sudo", "ip", "addr", "add", args.address, "dev", args.device])
             run_command(["sudo", "ip", "link", "set", "dev", args.device, "mtu", str(args.mtu)])
@@ -243,9 +236,7 @@ def main():
 
     elif args.command == "down":
         try:
-            cleanup_gateway(args.route_table, args.user)
-            cleanup_nat(args.route_table)
-            run_command(["sudo", "ip", "link", "delete", args.device])
+            cleanup_up_state(args.device, args.route_table, args.user)
         except RuntimeError as error:
             print(error)
             return
