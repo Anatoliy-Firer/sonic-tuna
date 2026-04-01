@@ -28,7 +28,7 @@ let emptyCountdown = 0;
 let emptyFrameAngle = 0.0;
 
 function drawEmptyFrame() {
-    if (emptyCountdown !== 0) {
+    if (emptyCountdown > 0) {
         emptyCountdown -= 1;
         return;
     }

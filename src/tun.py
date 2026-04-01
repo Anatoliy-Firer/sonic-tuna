@@ -19,25 +19,16 @@ class Tunnel(AbstractContextManager):
         fcntl.ioctl(self.__tun, self.__TUNSETIFF, ifr)
         os.set_blocking(self.__tun, False)
 
-    async def packages(self):
+    def packages(self):
         loop = asyncio.get_running_loop()
         ip_queue = asyncio.Queue()
 
         def read_ippack():
-            try:
-                ip_queue.put_nowait(os.read(self.__tun, self.__buffer_size))
-            except Exception as err:
-                ip_queue.put_nowait(err)
+            ip_queue.put_nowait(os.read(self.__tun, self.__buffer_size))
 
         loop.add_reader(self.__tun, read_ippack)
-        try:
-            while True:
-                item = await ip_queue.get()
-                if isinstance(item, Exception):
-                    raise item
-                yield item
-        finally:
-            loop.remove_reader(self.__tun)
+
+        return ip_queue
 
     def push_package(self, data: bytes):
         try:
@@ -46,6 +37,7 @@ class Tunnel(AbstractContextManager):
             print(f'Tun error: {err}')
 
     def close(self):
+        asyncio.get_running_loop().remove_reader(self.__tun)
         os.close(self.__tun)
 
     def __exit__(self, exc_type, exc_value, traceback, /):
