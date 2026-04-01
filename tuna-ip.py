@@ -92,69 +92,24 @@ def configure_gateway(device, username, route_table, gateway):
     user_uid = pwd.getpwnam(username).pw_uid
     user_rule_pref = get_user_rule_pref(route_table)
 
-    run_command(
-        ["sudo", "ip", "route", "replace", "default", "via", gateway, "dev", device, "table", str(route_table)]
-    )
-    run_command(
-        [
-            "sudo",
-            "ip",
-            "rule",
-            "del",
-            "pref",
-            str(user_rule_pref),
-            "uidrange",
-            f"{user_uid}-{user_uid}",
-            "lookup",
-            "main",
-        ],
-        check=False,
-    )
-    run_command(
-        [
-            "sudo",
-            "ip",
-            "rule",
-            "add",
-            "pref",
-            str(user_rule_pref),
-            "uidrange",
-            f"{user_uid}-{user_uid}",
-            "lookup",
-            "main",
-        ]
-    )
-    run_command(
-        [
-            "sudo",
-            "ip",
-            "rule",
-            "del",
-            "pref",
-            str(route_table),
-            "not",
-            "fwmark",
-            str(route_table),
-            "table",
-            str(route_table),
-        ],
-        check=False,
-    )
-    run_command(
-        [
-            "sudo",
-            "ip",
-            "rule",
-            "add",
-            "pref",
-            str(route_table),
-            "not",
-            "fwmark",
-            str(route_table),
-            "table",
-            str(route_table),
-        ]
-    )
+    run_command(["sudo", "ip", "route", "replace", "default", "via", gateway, "dev", device, "table", str(route_table)])
+    run_command([
+        "sudo", "ip", "rule", "del", "pref", str(user_rule_pref),
+        "uidrange", f"{user_uid}-{user_uid}", "lookup", "main",
+    ], check=False, )
+    run_command([
+        "sudo", "ip", "rule", "add", "pref",
+        str(user_rule_pref), "uidrange", f"{user_uid}-{user_uid}",
+        "lookup", "main",
+    ])
+    run_command([
+        "sudo", "ip", "rule", "del", "pref", str(route_table),
+        "not", "fwmark", str(route_table), "table", str(route_table),
+    ], check=False, )
+    run_command([
+        "sudo", "ip", "rule", "add", "pref", str(route_table),
+        "not", "fwmark", str(route_table), "table", str(route_table),
+    ])
 
 
 def cleanup_gateway(route_table, username=None):
@@ -162,35 +117,15 @@ def cleanup_gateway(route_table, username=None):
 
     if username and user_exists(username):
         user_uid = pwd.getpwnam(username).pw_uid
-        run_command(
-            [
-                "sudo",
-                "ip",
-                "rule",
-                "del",
-                "pref",
-                str(user_rule_pref),
-                "uidrange",
-                f"{user_uid}-{user_uid}",
-                "lookup",
-                "main",
-            ],
-            check=False,
-        )
+        run_command([
+            "sudo", "ip", "rule", "del", "pref", str(user_rule_pref),
+            "uidrange", f"{user_uid}-{user_uid}", "lookup", "main",
+        ], check=False, )
 
     run_command(
         [
-            "sudo",
-            "ip",
-            "rule",
-            "del",
-            "pref",
-            str(route_table),
-            "not",
-            "fwmark",
-            str(route_table),
-            "table",
-            str(route_table),
+            "sudo", "ip", "rule", "del", "pref", str(route_table),
+            "not", "fwmark", str(route_table), "table", str(route_table),
         ],
         check=False,
     )
@@ -205,88 +140,31 @@ def configure_nat(device, nat_device, subnet, route_table):
     run_command(["sudo", "sysctl", "-w", "net.ipv4.ip_forward=1"])
 
     run_command(["sudo", "nft", "add", "table", "inet", nat_filter_table], check=False)
-    run_command(
-        [
-            "sudo",
-            "nft",
-            "add",
-            "chain",
-            "inet",
-            nat_filter_table,
-            "forward",
-            "{ type filter hook forward priority filter; policy accept; }",
-        ],
-        check=False,
-    )
+    run_command([
+        "sudo", "nft", "add", "chain", "inet", nat_filter_table, "forward",
+        "{ type filter hook forward priority filter; policy accept; }",
+    ], check=False, )
     run_command(["sudo", "nft", "flush", "chain", "inet", nat_filter_table, "forward"])
-    run_command(
-        [
-            "sudo",
-            "nft",
-            "add",
-            "rule",
-            "inet",
-            nat_filter_table,
-            "forward",
-            "iifname",
-            device,
-            "oifname",
-            nat_device,
-            "accept",
-        ]
-    )
-    run_command(
-        [
-            "sudo",
-            "nft",
-            "add",
-            "rule",
-            "inet",
-            nat_filter_table,
-            "forward",
-            "iifname",
-            nat_device,
-            "oifname",
-            device,
-            "ct",
-            "state",
-            "related,established",
-            "accept",
-        ]
-    )
+    run_command([
+        "sudo", "nft", "add", "rule", "inet", nat_filter_table,
+        "forward", "iifname", device, "oifname", nat_device, "accept",
+    ])
+    run_command([
+        "sudo", "nft", "add", "rule", "inet", nat_filter_table, "forward", "iifname",
+        nat_device, "oifname", device, "ct", "state", "related,established", "accept",
+    ])
 
     run_command(["sudo", "nft", "add", "table", "ip", nat_postrouting_table], check=False)
-    run_command(
-        [
-            "sudo",
-            "nft",
-            "add",
-            "chain",
-            "ip",
-            nat_postrouting_table,
-            "postrouting",
-            "{ type nat hook postrouting priority srcnat; policy accept; }",
-        ],
-        check=False,
-    )
+    run_command([
+        "sudo", "nft", "add", "chain", "ip", nat_postrouting_table, "postrouting",
+        "{ type nat hook postrouting priority srcnat; policy accept; }",
+    ], check=False, )
     run_command(["sudo", "nft", "flush", "chain", "ip", nat_postrouting_table, "postrouting"])
-    run_command(
-        [
-            "sudo",
-            "nft",
-            "add",
-            "rule",
-            "ip",
-            nat_postrouting_table,
-            "postrouting",
-            "oifname",
-            nat_device,
-            "ip",
-            "saddr",
-            subnet,
-            "masquerade",
-        ]
-    )
+    run_command([
+        "sudo", "nft", "add", "rule", "ip", nat_postrouting_table,
+        "postrouting", "oifname", nat_device, "ip", "saddr",
+        subnet, "masquerade",
+    ])
 
 
 def cleanup_nat(route_table):
