@@ -6,7 +6,7 @@ from asyncio import CancelledError
 import numpy as np
 import uvloop
 
-import src.encoder as encoder
+import src.util.encoder as encoder
 from src.browser import Browser
 from src.tun import Tunnel
 from src.util.batch_generator import chunk_from_queue
@@ -34,7 +34,7 @@ def deserialize_arrays(buffer):
 
 
 async def tun_to_ws(tunnel: Tunnel, ws: WebSocketServer, w: int, h: int, fps: int):
-    __max_size = (w - 2) * (h - 2) * 3 // 8 - 8  # максимальная длина массива байт, принимаемого функцией encoder.encode
+    __max_size = (w - 2) * (h - 2) * 3 * 2 // 8 - 8  # максимальная длина массива байт, принимаемого функцией encoder.encode
     __timeout = 1.0 / fps
 
     predicate = lambda count, length: length + count * 8 < __max_size
