@@ -66,8 +66,8 @@ function drawFrame(rgbBytes) {
 function tick() {
     const nextFrame = frameQueue.shift();
     if (nextFrame) {
-        drawFrame(nextFrame);
         emptyCountdown = 0;
+        drawFrame(nextFrame);
         return;
     }
 

@@ -40,13 +40,13 @@ async def tun_to_ws(tunnel: Tunnel, ws: WebSocketServer, w: int, h: int, fps: in
     predicate = lambda count, length: length + count * 8 < __max_size
 
     async for packs in chunk_from_queue(tunnel.packages(), predicate, __timeout):
-        encoded = encoder.encode(np.frombuffer(serialize_arrays(packs), dtype=np.uint8), w, h, 1, 1)
+        encoded = encoder.encode(np.frombuffer(serialize_arrays(packs), dtype=np.uint8), w, h, 1, 2)
         await ws.push_frame(encoded.tobytes())
 
 
 async def ws_to_tun(tunnel: Tunnel, ws: WebSocketServer, w: int, h: int):
     async for frame in ws.frames():
-        decoded = encoder.decode(np.frombuffer(frame, dtype=np.uint8).reshape((w, h, 3)), w, h, 1, 1)
+        decoded = encoder.decode(np.frombuffer(frame, dtype=np.uint8).reshape((w, h, 3)), w, h, 1, 2)
         if decoded is not None:
             try:
                 for pack in deserialize_arrays(decoded):

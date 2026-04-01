@@ -10,21 +10,25 @@ def encode(
         data: np.ndarray,
         width: int = 256,
         height: int = 256,
-        block_size: int = 4,
-        border_size: int = 4
+        border_size: int = 4,
+        n: int = 1
 ) -> np.ndarray:
     """
     Упаковывает 1D массив байт в RGB bitmap
     """
+    if not 1 <= n <= 8:
+        raise ValueError("Аргумент n должен быть в диапазоне от 1 до 8.")
+
     if data.dtype != np.uint8:
         data = data.astype(np.uint8)
 
-    # Вычисляем полезную площадь (в "логических" пикселях-блоках)
-    log_w = (width - 2 * border_size) // block_size
-    log_h = (height - 2 * border_size) // block_size
+    # Вычисляем полезную площадь в пикселях
+    log_w = width - 2 * border_size
+    log_h = height - 2 * border_size
 
     # Максимальная вместимость в битах и байтах
-    max_bits = log_w * log_h * 3  # 3 канала (RGB)
+    max_symbols = log_w * log_h * 3  # 3 канала (RGB)
+    max_bits = max_symbols * n
     max_bytes = max_bits // 8
 
     # 4 байта магия + 4 байта длина
@@ -46,12 +50,12 @@ def encode(
         padding = np.zeros(max_bits - len(bits), dtype=np.uint8)
         bits = np.concatenate((bits, padding))
 
-    # Формируем логическое изображение: 1 -> 255, 0 -> 0
-    # Reshape в (H, W, 3 канала)
-    payload_log = bits.reshape((log_h, log_w, 3)) * 255
-
-    # Масштабируем до реальных размеров (аппаратное дублирование пикселей)
-    payload = np.repeat(np.repeat(payload_log, block_size, axis=0), block_size, axis=1)
+    # Группируем по n бит на канал и растягиваем по всей шкале 0..255.
+    grouped_bits = bits.reshape((-1, n))
+    bit_weights = (1 << np.arange(n - 1, -1, -1, dtype=np.uint16))
+    symbols = grouped_bits.dot(bit_weights).astype(np.uint16)
+    levels = (symbols * 255 + ((1 << n) - 2) // 2) // ((1 << n) - 1)
+    payload_log = levels.astype(np.uint8).reshape((log_h, log_w, 3))
 
     # Создаем итоговый холст
     frame = np.zeros((height, width, 3), dtype=np.uint8)
@@ -63,12 +67,8 @@ def encode(
     frame[:, :border_size, :] = [255, 128, 0]  # Левая оранжевая
     frame[:, -border_size:, :] = [0, 128, 255]  # Правая голубая
 
-    # Вставляем полезную нагрузку по центру
-    # (центрируем, если из-за деления остались лишние пиксели)
-    start_y = border_size + ((height - 2 * border_size) % block_size) // 2
-    start_x = border_size + ((width - 2 * border_size) % block_size) // 2
-
-    frame[start_y:start_y + payload.shape[0], start_x:start_x + payload.shape[1]] = payload
+    # Вставляем полезную нагрузку внутрь рамки
+    frame[border_size:border_size + log_h, border_size:border_size + log_w] = payload_log
 
     return frame
 
@@ -77,12 +77,15 @@ def decode(
         image: np.ndarray,
         width: int = 256,
         height: int = 256,
-        block_size: int = 4,
-        border_size: int = 4
+        border_size: int = 4,
+        n: int = 1
 ) -> np.ndarray | None:
     """
     Извлекает данные из RGB bitmap. Если кадр не валиден — возвращает None.
     """
+    if not 1 <= n <= 8:
+        raise ValueError("Аргумент n должен быть в диапазоне от 1 до 8.")
+
     if image.shape != (height, width, 3):
         return None
 
@@ -95,26 +98,21 @@ def decode(
     if top_green_mean < 150 or bottom_magenta_red_mean < 150:
         return None
 
-    log_w = (width - 2 * border_size) // block_size
-    log_h = (height - 2 * border_size) // block_size
-
-    start_y = border_size + ((height - 2 * border_size) % block_size) // 2
-    start_x = border_size + ((width - 2 * border_size) % block_size) // 2
+    log_w = width - 2 * border_size
+    log_h = height - 2 * border_size
 
     # Вырезаем область payload
-    payload_area = image[start_y:start_y + log_h * block_size,
-    start_x:start_x + log_w * block_size]
+    sampled = image[border_size:border_size + log_h, border_size:border_size + log_w]
 
-    # Сэмплируем пиксели СТРОГО из центра каждого блока!
-    # Это спасает от размытых краев макроблоков H264
-    offset = block_size // 2
-    sampled = payload_area[offset::block_size, offset::block_size]
-
-    # Thresholding: всё что ярче 127 считаем единицей
-    bits = (sampled > 127).astype(np.uint8).flatten()
+    max_symbol = (1 << n) - 1
+    quantized = np.rint(sampled.astype(np.float32) * max_symbol / 255.0).astype(np.uint8)
+    bits = np.unpackbits(quantized.reshape(-1, 1), axis=1)[:, -n:].reshape(-1)
 
     # Собираем байты из битов
     all_bytes = np.packbits(bits)
+
+    if len(all_bytes) < 8:
+        return None
 
     # Проверяем "магическое число" в заголовке (второй этап валидации)
     extracted_magic = bytes(all_bytes[:4])
