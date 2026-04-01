@@ -20,6 +20,7 @@ sourceCtx.imageSmoothingEnabled = false;
 const stream = canvas.captureStream(0);
 const [videoTrack] = stream.getVideoTracks();
 const frameQueue = [];
+const frameQueueLimit = 10;
 const outgoingFrameQueue = [];
 let socket = null;
 
@@ -112,6 +113,7 @@ function connectFrames() {
 
     currentSocket.onmessage = (event) => {
         frameQueue.push(new Uint8Array(event.data));
+        while (frameQueue.length > frameQueueLimit) frameQueue.shift();
     };
 
     currentSocket.onclose = () => {

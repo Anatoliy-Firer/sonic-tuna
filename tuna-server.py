@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import struct
+from asyncio import CancelledError
 
 import numpy as np
 import uvloop
@@ -10,7 +11,6 @@ from src.browser import Browser
 from src.tun import Tunnel
 from src.util.batch_generator import chunk_from_queue
 from src.ws_server import WebSocketServer
-
 
 _PACKET_SIZE = struct.Struct("I")
 
@@ -35,7 +35,7 @@ def deserialize_arrays(buffer):
 
 async def tun_to_ws(tunnel: Tunnel, ws: WebSocketServer, w: int, h: int, fps: int):
     __max_size = (w - 2) * (h - 2) * 3 // 8 - 8  # максимальная длина массива байт, принимаемого функцией encoder.encode
-    __timeout = 1.0 / (fps * 2)
+    __timeout = 1.0 / (fps + 1)
 
     predicate = lambda count, length: length + count * 8 < __max_size
 
@@ -48,8 +48,13 @@ async def ws_to_tun(tunnel: Tunnel, ws: WebSocketServer, w: int, h: int):
     async for frame in ws.frames():
         decoded = encoder.decode(np.frombuffer(frame, dtype=np.uint8).reshape((w, h, 3)), w, h, 1, 1)
         if decoded is not None:
-            for pack in deserialize_arrays(decoded):
-                tunnel.push_package(pack)
+            try:
+                for pack in deserialize_arrays(decoded):
+                    tunnel.push_package(pack)
+            except CancelledError:
+                raise
+            except Exception:
+                pass
 
 
 async def main(args: argparse.Namespace):
