@@ -40,7 +40,10 @@ class Tunnel(AbstractContextManager):
             loop.remove_reader(self.__tun)
 
     def push_package(self, data: bytes):
-        os.write(self.__tun, data)
+        try:
+            os.write(self.__tun, data)
+        except OSError as err:
+            print(f'Tun error: {err}')
 
     def close(self):
         os.close(self.__tun)
