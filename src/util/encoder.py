@@ -105,7 +105,8 @@ def decode(
     sampled = image[border_size:border_size + log_h, border_size:border_size + log_w]
 
     max_symbol = (1 << n) - 1
-    quantized = np.rint(sampled.astype(np.float32) * max_symbol / 255.0).astype(np.uint8)
+    # Квантование в ближайший из 2^n символов. Для n=1 это тот же порог около 255 / 2.
+    quantized = ((sampled.astype(np.uint16) * max_symbol * 2 + 255) // (2 * 255)).astype(np.uint8)
     bits = np.unpackbits(quantized.reshape(-1, 1), axis=1)[:, -n:].reshape(-1)
 
     # Собираем байты из битов
@@ -127,3 +128,10 @@ def decode(
         return None
 
     return all_bytes[8:8 + data_length]
+
+
+if __name__ == "__main__":
+    data = np.random.randint(0, 255, 1400, dtype=np.uint8)
+    encoded = encode(data, n=4)
+    decoded = decode(encoded, n=4)
+    print(np.array_equal(data, decoded))
