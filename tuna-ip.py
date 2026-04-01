@@ -50,10 +50,6 @@ def create_system_user(username):
     return run_command(["sudo", "useradd", "-M", "-s", nologin_shell, username], check=False)
 
 
-def get_mark_table_name(route_table):
-    return f"tuna_mark_{route_table}"
-
-
 def get_nat_filter_table_name(route_table):
     return f"tuna_nat_filter_{route_table}"
 
@@ -83,9 +79,9 @@ def normalize_interface_address(address):
 
 
 def get_user_rule_pref(route_table):
-    if route_table <= 1:
-        raise RuntimeError("--route-table must be greater than 1 when used with --gateway")
-    return route_table - 1
+    if route_table <= 0:
+        raise RuntimeError("--route-table must be greater than 0 when used with --gateway")
+    return route_table
 
 
 def configure_gateway(device, username, route_table, gateway):
@@ -95,20 +91,12 @@ def configure_gateway(device, username, route_table, gateway):
     run_command(["sudo", "ip", "route", "replace", "default", "via", gateway, "dev", device, "table", str(route_table)])
     run_command([
         "sudo", "ip", "rule", "del", "pref", str(user_rule_pref),
-        "uidrange", f"{user_uid}-{user_uid}", "lookup", "main",
+        "not", "uidrange", f"{user_uid}-{user_uid}", "lookup", str(route_table),
     ], check=False, )
     run_command([
         "sudo", "ip", "rule", "add", "pref",
-        str(user_rule_pref), "uidrange", f"{user_uid}-{user_uid}",
-        "lookup", "main",
-    ])
-    run_command([
-        "sudo", "ip", "rule", "del", "pref", str(route_table),
-        "not", "fwmark", str(route_table), "table", str(route_table),
-    ], check=False, )
-    run_command([
-        "sudo", "ip", "rule", "add", "pref", str(route_table),
-        "not", "fwmark", str(route_table), "table", str(route_table),
+        str(user_rule_pref), "not", "uidrange", f"{user_uid}-{user_uid}",
+        "lookup", str(route_table),
     ])
 
 
@@ -119,20 +107,9 @@ def cleanup_gateway(route_table, username=None):
         user_uid = pwd.getpwnam(username).pw_uid
         run_command([
             "sudo", "ip", "rule", "del", "pref", str(user_rule_pref),
-            "uidrange", f"{user_uid}-{user_uid}", "lookup", "main",
+            "not", "uidrange", f"{user_uid}-{user_uid}", "lookup", str(route_table),
         ], check=False, )
-
-    run_command(
-        [
-            "sudo", "ip", "rule", "del", "pref", str(route_table),
-            "not", "fwmark", str(route_table), "table", str(route_table),
-        ],
-        check=False,
-    )
     run_command(["sudo", "ip", "route", "flush", "table", str(route_table)], check=False)
-    run_command(["sudo", "nft", "delete", "table", "inet", get_mark_table_name(route_table)], check=False)
-
-
 def configure_nat(device, nat_device, subnet, route_table):
     nat_filter_table = get_nat_filter_table_name(route_table)
     nat_postrouting_table = get_nat_postrouting_table_name(route_table)
@@ -191,12 +168,12 @@ def main():
     )
     up_parser.add_argument("--mtu", type=int, default=1400, help="MTU size")
     up_parser.add_argument("--route-table", type=int, default=8042,
-                           help="Route table and fwmark value. Used by gateway")
+                           help="Policy routing table used by gateway")
 
     down_parser = subparsers.add_parser("down", help="Turn off and remove interface")
     down_parser.add_argument("-d", "--device", type=str, default="tuna", help="Interface name")
     down_parser.add_argument("-u", "--user", type=str, default="sonic-tuna", help="System user, owner of interface")
-    down_parser.add_argument("--route-table", type=int, default=8042, help="Route table and fwmark value")
+    down_parser.add_argument("--route-table", type=int, default=8042, help="Policy routing table used by gateway")
 
     args = parser.parse_args()
 
