@@ -6,51 +6,32 @@ from asyncio import CancelledError
 import numpy as np
 import uvloop
 
-import src.util.encoder as encoder
 from src.browser import Browser
 from src.tun import Tunnel
 from src.util.batch_generator import chunk_from_queue
+from src.util.dct_encoder import DCTEncoder, EncoderInterface
 from src.ws_server import WebSocketServer
 
 _PACKET_SIZE = struct.Struct("I")
 
 
-def serialize_arrays(arrays):
-    packed = bytearray()
-    for arr in arrays:
-        packed.extend(_PACKET_SIZE.pack(len(arr)))
-        packed.extend(arr)
-    return packed
-
-
-def deserialize_arrays(buffer):
-    view = memoryview(buffer)
-    offset = 0
-    while offset < len(view):
-        size = _PACKET_SIZE.unpack_from(view, offset)[0]
-        offset += _PACKET_SIZE.size
-        yield view[offset:offset + size]
-        offset += size
-
-
-async def tun_to_ws(tunnel: Tunnel, ws: WebSocketServer, w: int, h: int, fps: int, density: int):
-    __max_size = (w - 2) * (h - 2) * 3 * density // 8 - 8  # максимальная длина массива байт, принимаемого функцией encoder.encode
+async def tun_to_ws(tunnel: Tunnel, ws: WebSocketServer, fps: int, codec: EncoderInterface):
     __timeout = 1.0 / fps
 
-    predicate = lambda count, length: length + count * 8 < __max_size
+    predicate = lambda count, length: length < codec.max_data_size(count)
 
     async for packs in chunk_from_queue(tunnel.packages(), predicate, __timeout):
-        encoded = encoder.encode(np.frombuffer(serialize_arrays(packs), dtype=np.uint8), w, h, 1, density)
+        encoded = codec.encode(packs)
         await ws.push_frame(encoded.tobytes())
 
 
-async def ws_to_tun(tunnel: Tunnel, ws: WebSocketServer, w: int, h: int,  density: int):
+async def ws_to_tun(tunnel: Tunnel, ws: WebSocketServer, codec: EncoderInterface):
+    w, h = codec.image_size()
     async for frame in ws.frames():
-        decoded = encoder.decode(np.frombuffer(frame, dtype=np.uint8).reshape((w, h, 3)), w, h, 1, density)
-        if decoded is not None:
+        decoded = codec.decode(np.frombuffer(frame, dtype=np.uint8).reshape((w, h, 3)))
+        for pack in decoded:
             try:
-                for pack in deserialize_arrays(decoded):
-                    tunnel.push_package(pack)
+                tunnel.push_package(pack)
             except CancelledError:
                 raise
             except Exception:
@@ -66,8 +47,11 @@ async def main(args: argparse.Namespace):
     ws_server = asyncio.create_task(websocket.start())
 
     browser_task = asyncio.create_task(browser.start_browser(not args.show_gui))
-    tun_to_ws_task = asyncio.create_task(tun_to_ws(tunnel, websocket, args.frame_width, args.frame_height, args.fps, args.frame_density))
-    ws_to_tun_task = asyncio.create_task(ws_to_tun(tunnel, websocket, args.frame_width, args.frame_height, args.frame_density))
+
+    codec = DCTEncoder(args.frame_width // 8, args.frame_height // 8, 20, 'src/util/encoder_lut.hex')
+
+    tun_to_ws_task = asyncio.create_task(tun_to_ws(tunnel, websocket, args.fps, codec))
+    ws_to_tun_task = asyncio.create_task(ws_to_tun(tunnel, websocket, codec))
 
     try:
         await asyncio.gather(browser_task, tun_to_ws_task, ws_to_tun_task)
@@ -90,12 +74,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog="tuna-server", description="Tuna Server")
 
     parser.add_argument("-d", "--device", default="tuna", help="Virtual interface name")
-    parser.add_argument("--frame-width", type=int, default=64, help="Frame width")
+    parser.add_argument("--frame-width", type=int, default=256, help="Frame width")
     parser.add_argument("--call-url", type=str, default="https://telemost.yandex.ru/j/71720776790697",
                         help="Yandex Telemost conference url")
-    parser.add_argument("--frame-height", type=int, default=64, help="Frame height")
-    parser.add_argument("--frame-scale", type=int, default=8, help="Frame scale")
-    parser.add_argument("--frame-density", type=int, default=1, help="Amount bits per pixel")
+    parser.add_argument("--frame-height", type=int, default=256, help="Frame height")
+    parser.add_argument("--frame-scale", type=int, default=1, help="Frame scale")
     parser.add_argument("--fps", type=int, default=20, help="Frame rate")
     parser.add_argument("-p", "--port", type=int, default=8042, help="Internal websocket port")
     parser.add_argument("--mtu", type=int, default=1400, help="MTU")

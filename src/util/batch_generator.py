@@ -2,6 +2,8 @@ import asyncio
 import time
 from typing import AsyncGenerator, Callable, Any
 
+import numpy as np
+
 
 async def chunk_from_queue(queue: asyncio.Queue[Any],
                            predicate: Callable[[int, int], bool],
@@ -36,14 +38,14 @@ async def chunk_from_queue(queue: asyncio.Queue[Any],
 
             item_len = len(item)
             if predicate(len(buffer) + 1, current_size + item_len):
-                buffer.append(item)
+                buffer.append(np.frombuffer(item, dtype=np.uint8))
                 current_size += item_len
                 continue
 
             if buffer:
                 yield flush()
 
-            buffer.append(item)
+            buffer.append(np.frombuffer(item, dtype=np.uint8))
             current_size = item_len
             if deadline is None:
                 deadline = time.perf_counter() + max_wait
