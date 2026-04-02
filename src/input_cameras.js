@@ -1,36 +1,55 @@
 ([WIDTH, HEIGHT]) => {
 
     const SCAN_INTERVAL_MS = 1000;
-    const FRAME_SIGNATURE_THRESHOLD = 150;
+    const SIGNATURE_DISTANCE_THRESHOLD = 50;
+    const SIGNATURE_LT = [255, 255, 255];
+    const SIGNATURE_RT = [255, 0, 0];
+    const SIGNATURE_LB = [0, 255, 0];
+    const SIGNATURE_RB = [0, 0, 255];
 
     function fillRgbFromRgba(rgbaBytes, rgbBytes) {
-        let topGreenSum = 0;
-        let bottomRedSum = 0;
-        const topRowEnd = WIDTH * 4;
-        const bottomRowStart = (HEIGHT - 1) * WIDTH * 4;
+        if (WIDTH <= 0 || HEIGHT <= 0) {
+            return false;
+        }
 
-        for (let src = 0, dst = 0; src < rgbaBytes.length; src += 4, dst += 3) {
-            const red = rgbaBytes[src];
-            const green = rgbaBytes[src + 1];
-            const blue = rgbaBytes[src + 2];
+        for (let y = 0; y < HEIGHT; y += 1) {
+            const rgbaRowOffset = y * WIDTH * 4;
+            const rgbRowOffset = y * WIDTH * 3;
 
-            rgbBytes[dst] = red;
-            rgbBytes[dst + 1] = green;
-            rgbBytes[dst + 2] = blue;
+            for (let x = 0; x < WIDTH; x += 1) {
+                const src = rgbaRowOffset + x * 4;
+                const dst = rgbRowOffset + x * 3;
+                const red = rgbaBytes[src];
+                const green = rgbaBytes[src + 1];
+                const blue = rgbaBytes[src + 2];
 
-            if (src < topRowEnd) {
-                topGreenSum += green;
-            }
-
-            if (src >= bottomRowStart) {
-                bottomRedSum += red;
+                rgbBytes[dst] = red;
+                rgbBytes[dst + 1] = green;
+                rgbBytes[dst + 2] = blue;
             }
         }
 
-        const topGreenMean = topGreenSum / WIDTH;
-        const bottomRedMean = bottomRedSum / WIDTH;
+        const pixelAt = (x, y) => {
+            const src = (y * WIDTH + x) * 4;
+            return [rgbaBytes[src], rgbaBytes[src + 1], rgbaBytes[src + 2]];
+        };
 
-        return topGreenMean >= FRAME_SIGNATURE_THRESHOLD && bottomRedMean >= FRAME_SIGNATURE_THRESHOLD;
+        const distance = (actual, expected) => {
+            const dR = expected[0] - actual[0];
+            const dG = expected[1] - actual[1];
+            const dB = expected[2] - actual[2];
+            return Math.hypot(dR, dG, dB);
+        };
+
+        const lt = pixelAt(0, 0);
+        const rt = pixelAt(0, HEIGHT - 1);
+        const lb = pixelAt(WIDTH - 1, 0);
+        const rb = pixelAt(WIDTH - 1, HEIGHT - 1);
+
+        return distance(lt, SIGNATURE_LT) <= SIGNATURE_DISTANCE_THRESHOLD
+            && distance(rt, SIGNATURE_RT) <= SIGNATURE_DISTANCE_THRESHOLD
+            && distance(lb, SIGNATURE_LB) <= SIGNATURE_DISTANCE_THRESHOLD
+            && distance(rb, SIGNATURE_RB) <= SIGNATURE_DISTANCE_THRESHOLD;
     }
 
     function getRemoteVideoEntries() {

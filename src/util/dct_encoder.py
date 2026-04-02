@@ -19,6 +19,9 @@ class DCTEncoder(EncoderInterface):
                      (2, 0), (3, 0), (2, 1), (1, 2),
                      (0, 3), (0, 4), (1, 3), (2, 2),
                      (3, 1), (4, 0), (5, 0), (0, 5)]
+
+    __SIGNATURE_DISTANCE_THRESHOLD = 50
+
     __PATH_X = np.array([x for x, _ in __ENCODE_PATH], dtype=np.intp)
     __PATH_Y = np.array([y for _, y in __ENCODE_PATH], dtype=np.intp)
     __LUT_SHAPE = (1 << 16, 8, 8, 3)
@@ -148,10 +151,10 @@ class DCTEncoder(EncoderInterface):
         rt = frame[-7:, :7].mean(axis=(0, 1))
         lb = frame[:7, -7:].mean(axis=(0, 1))
         rb = frame[-7:, -7:].mean(axis=(0, 1))
-        if (np.linalg.norm(self.__LT - lt) > 30 or
-                np.linalg.norm(self.__RT - rt) > 30 or
-                np.linalg.norm(self.__LB - lb) > 30 or
-                np.linalg.norm(self.__RB - rb) > 30):
+        if (np.linalg.norm(self.__LT - lt) > self.__SIGNATURE_DISTANCE_THRESHOLD or
+                np.linalg.norm(self.__RT - rt) > self.__SIGNATURE_DISTANCE_THRESHOLD or
+                np.linalg.norm(self.__LB - lb) > self.__SIGNATURE_DISTANCE_THRESHOLD or
+                np.linalg.norm(self.__RB - rb) > self.__SIGNATURE_DISTANCE_THRESHOLD):
             return result
 
         y_plane = cv2.cvtColor(frame, cv2.COLOR_RGB2YCrCb)[:, :, 0]
@@ -174,6 +177,7 @@ class DCTEncoder(EncoderInterface):
             size = struct.unpack('>I', header[4:].tobytes())[0]
             if not np.array_equal(self.__MAGIC_HEADER, header[:4]) or size > max_size:
                 return result
+            print('HEADER FOUND')
             pack = np.empty(size, dtype=np.uint8)
             for i in range((size + 1) // 2):
                 b2 = next_2_bytes()
