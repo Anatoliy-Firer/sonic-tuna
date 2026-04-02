@@ -25,19 +25,13 @@ const outgoingFrameQueue = [];
 let socket = null;
 
 let color = 'rgb(255 0 0)';
-let emptyCountdown = 0;
 let emptyFrameAngle = 0.0;
 
 function drawEmptyFrame() {
-    if (emptyCountdown > 0) {
-        emptyCountdown -= 1;
-        return;
-    }
     const red = Math.round(((Math.cos(emptyFrameAngle) + 1) / 2) * 255);
     const blue = Math.round(((Math.sin(emptyFrameAngle) + 1) / 2) * 255);
     color = `rgb(${red} 0 ${blue})`;
-    emptyFrameAngle += 0.1;
-    emptyCountdown = FPS;
+    emptyFrameAngle += 0.01;
 
     ctx.fillStyle = color;
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
@@ -66,7 +60,6 @@ function drawFrame(rgbBytes) {
 function tick() {
     const nextFrame = frameQueue.shift();
     if (nextFrame) {
-        emptyCountdown = 0;
         drawFrame(nextFrame);
         return;
     }
