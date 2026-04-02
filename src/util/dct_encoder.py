@@ -177,7 +177,6 @@ class DCTEncoder(EncoderInterface):
             size = struct.unpack('>I', header[4:].tobytes())[0]
             if not np.array_equal(self.__MAGIC_HEADER, header[:4]) or size > max_size:
                 return result
-            print('HEADER FOUND')
             pack = np.empty(size, dtype=np.uint8)
             for i in range((size + 1) // 2):
                 b2 = next_2_bytes()
