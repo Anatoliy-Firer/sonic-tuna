@@ -183,7 +183,7 @@ class DCTEncoder(EncoderInterface):
 
     def max_data_size(self, count: int) -> int:
         # 4 блока под сигнатуру и 4 байта под заголовок
-        return (self.__width * self.__height - 4) * self.__BLOCK_DENSITY - 4 * count
+        return (self.__width * self.__height - 4) * self.__BLOCK_DENSITY - 8 * count
 
 
 if __name__ == "__main__":
