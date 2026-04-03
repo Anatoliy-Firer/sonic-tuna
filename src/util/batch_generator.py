@@ -38,14 +38,14 @@ async def chunk_from_queue(queue: asyncio.Queue[Any],
 
             item_len = len(item)
             if predicate(len(buffer) + 1, current_size + item_len):
-                buffer.append(np.frombuffer(item, dtype=np.uint8))
+                buffer.append(item)
                 current_size += item_len
                 continue
 
             if buffer:
                 yield flush()
 
-            buffer.append(np.frombuffer(item, dtype=np.uint8))
+            buffer.append(item)
             current_size = item_len
             if deadline is None:
                 deadline = time.perf_counter() + max_wait

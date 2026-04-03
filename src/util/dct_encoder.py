@@ -1,4 +1,6 @@
 import struct
+import zlib
+from typing import Iterable
 
 import cv2
 import numpy as np
@@ -6,19 +8,120 @@ import numpy as np
 from src.util.encoder import EncoderInterface
 
 
+class Frame:
+    __MAGIC = b'TUNA'
+
+    @staticmethod
+    def serialize(data: list[bytes]) -> np.ndarray:
+        N = len(data)
+
+        # Считаем размер payload
+        total_payload_len = sum(len(b) + 4 for b in data)
+
+        header = bytearray()
+        header.extend(Frame.__MAGIC)
+        header.extend(struct.pack('>H', N))
+        header.extend(struct.pack('>H', total_payload_len))
+
+        # entries (offset, length)
+        offset = 0
+        entries = bytearray()
+        for b in data:
+            length = len(b)
+            entries.extend(struct.pack('>HH', offset, length))
+            offset += length + 4
+
+        header.extend(entries)
+
+        # CRC заголовка
+        header_crc = zlib.crc32(header)
+        header.extend(struct.pack('>I', header_crc))
+
+        # payload
+        payload = bytearray()
+        for b in data:
+            payload.extend(b)
+            payload.extend(struct.pack('>I', zlib.crc32(b)))
+
+        return np.frombuffer(header + payload, dtype=np.uint8)
+
+    @staticmethod
+    def parse_header(stream: Iterable[int]) -> tuple[int | None, list[tuple[int, int]] | None]:
+        it = iter(stream)
+
+        def read_n(n: int) -> bytes:
+            return bytes([next(it) for _ in range(n)])
+
+        try:
+            magic = read_n(4)
+
+            if magic != Frame.__MAGIC:
+                return None, None
+
+            n_bytes = read_n(2)
+            N = struct.unpack('>H', n_bytes)[0]
+
+            total_len_bytes = read_n(2)
+            total_payload_len = struct.unpack('>H', total_len_bytes)[0]
+
+            entries_raw = read_n(N * 4)
+
+            header = bytearray()
+            header.extend(magic)
+            header.extend(n_bytes)
+            header.extend(total_len_bytes)
+            header.extend(entries_raw)
+
+            stored_crc_bytes = read_n(4)
+            stored_crc = struct.unpack('>I', stored_crc_bytes)[0]
+
+            if zlib.crc32(header) != stored_crc:
+                return None, None
+            entries = []
+            for i in range(N):
+                offset, length = struct.unpack(
+                    '>HH',
+                    entries_raw[i * 4:(i + 1) * 4]
+                )
+                entries.append((offset, length))
+
+            return total_payload_len, entries
+
+        except StopIteration:
+            return None, None
+
+    @staticmethod
+    def extract_payload(payload: np.ndarray, entries: list[tuple[int, int]]) -> list[bytes]:
+        raw = payload.tobytes()
+
+        result = []
+
+        for offset, length in entries:
+            start = offset
+            end = start + length
+
+            if end + 4 > len(raw):
+                continue  # выход за границы
+            data_bytes = raw[start:end]
+            stored_crc = struct.unpack('>I', raw[end:end + 4])[0]
+            if zlib.crc32(data_bytes) == stored_crc:
+                result.append(data_bytes)
+
+        return result
+
+
 class DCTEncoder(EncoderInterface):
     def image_size(self) -> tuple[int, int]:
         return self.__width * 8, self.__height * 8
 
     __BLOCK_DENSITY = 2
-    __MAGIC_HEADER = np.frombuffer(b'TUNA', dtype=np.uint8)
     __LUT_MAGIC = b'DCTL'
     __LUT_HEADER_FORMAT = '>4sf'
 
     __ENCODE_PATH = [(1, 0), (0, 1), (0, 2), (1, 1),
                      (2, 0), (3, 0), (2, 1), (1, 2),
                      (0, 3), (0, 4), (1, 3), (2, 2),
-                     (3, 1), (4, 0), (5, 0), (0, 5)]
+                     (3, 1), (4, 0), (4, 1), (1, 4)]
 
     __SIGNATURE_DISTANCE_THRESHOLD = 50
 
@@ -27,7 +130,7 @@ class DCTEncoder(EncoderInterface):
     __LUT_SHAPE = (1 << 16, 8, 8, 3)
     __LUT_SIZE = int(np.prod(__LUT_SHAPE))
 
-    def __init__(self, width: int = 32, height: int = 32, amplitude: float = 20, lut_file: str | None = None):
+    def __init__(self, width: int = 32, height: int = 32, amplitude: float = 40, lut_file: str | None = None):
         self.__width = width
         self.__height = height
         self.__amplitude = np.float32(amplitude)
@@ -106,8 +209,8 @@ class DCTEncoder(EncoderInterface):
         y_mat = self.__dct2d(y_block.astype(np.float32) - 128.0)
         return np.uint8(np.packbits(y_mat[self.__PATH_X, self.__PATH_Y] > 0.0))
 
-    def encode(self, data: np.ndarray | list[np.ndarray]) -> np.ndarray:
-        if isinstance(data, np.ndarray):
+    def encode(self, data: list[bytes]) -> np.ndarray:
+        if isinstance(data, bytes):
             data = [data]
 
         total_len = np.sum([len(x) for x in data])
@@ -122,20 +225,12 @@ class DCTEncoder(EncoderInterface):
         result[:8, -8:, 1] = 255
         result[-8:, -8:, 2] = 255
 
-        pgn = iter(self.__positions)
-
-        for pack in data:
-            header = np.concatenate(
-                (self.__MAGIC_HEADER, np.frombuffer(struct.pack('>I', len(pack)), dtype=np.uint8))).reshape((4, 2))
-            for h in header:
-                pos = next(pgn)
-                result[pos[0] * 8: pos[0] * 8 + 8, pos[1] * 8: pos[1] * 8 + 8] = self.encode_block(h)
-            if len(pack) % 2 == 1:
-                pack = np.pad(pack, (0, 1))
-            pack = pack.reshape((len(pack) // 2, 2))
-            for pair in pack:
-                pos = next(pgn)
-                result[pos[0] * 8: pos[0] * 8 + 8, pos[1] * 8: pos[1] * 8 + 8] = self.encode_block(pair)
+        pack = Frame.serialize(data)
+        if len(pack) % 2 == 1:
+            pack = np.pad(pack, (0, 1))
+        pack = pack.reshape((len(pack) // 2, 2))
+        for pos, pair in zip(self.__positions, pack):
+            result[pos[0] * 8: pos[0] * 8 + 8, pos[1] * 8: pos[1] * 8 + 8] = self.encode_block(pair)
 
         return result
 
@@ -144,7 +239,7 @@ class DCTEncoder(EncoderInterface):
     __LB = np.array([0, 255, 0], dtype=np.uint8)
     __RB = np.array([0, 0, 255], dtype=np.uint8)
 
-    def decode(self, frame: np.ndarray) -> list[np.ndarray]:
+    def decode(self, frame: np.ndarray) -> list[bytes]:
         result = []
         # сначала сверяем сигнатуру
         lt = frame[:7, :7].mean(axis=(0, 1))
@@ -159,43 +254,43 @@ class DCTEncoder(EncoderInterface):
 
         y_plane = cv2.cvtColor(frame, cv2.COLOR_RGB2YCrCb)[:, :, 0]
         pgn = iter(self.__positions)
-        max_size = self.max_data_size(1) * 2
 
-        def next_2_bytes():
-            pos = next(pgn, None)
-            if pos is None:
-                return None
-            return self.decode_block(y_plane[pos[0] * 8: pos[0] * 8 + 8, pos[1] * 8: pos[1] * 8 + 8])
+        def get_bytes():
+            while (pos := next(pgn, None)) is not None:
+                word = self.decode_block(y_plane[pos[0] * 8: pos[0] * 8 + 8, pos[1] * 8: pos[1] * 8 + 8])
+                yield word[0]
+                yield word[1]
+            return None
 
-        while True:
-            header = np.empty(8, dtype=np.uint8)
-            for i in range(4):
-                b2 = next_2_bytes()
-                if b2 is None:
-                    return result
-                header[i * 2: i * 2 + 2] = b2
-            size = struct.unpack('>I', header[4:].tobytes())[0]
-            if not np.array_equal(self.__MAGIC_HEADER, header[:4]) or size > max_size:
-                return result
-            pack = np.empty(size, dtype=np.uint8)
-            for i in range((size + 1) // 2):
-                b2 = next_2_bytes()
-                end = min(i * 2 + 2, size)
-                pack[i * 2:end] = b2[:end - i * 2]
-            result.append(pack)
+        gen = get_bytes()
+
+        total, offsets = Frame.parse_header(gen)
+
+        if not total or not offsets:
+            return []
+
+        raw = np.fromiter(gen, dtype=np.uint8, count=total)
+        return Frame.extract_payload(raw, offsets)
 
     def max_data_size(self, count: int) -> int:
-        # 4 блока под сигнатуру и 4 байта под заголовок
-        return (self.__width * self.__height - 4) * self.__BLOCK_DENSITY - 8 * count
+        # всего блоков без учёта угловых сигнатурных
+        sz = self.__width * self.__height - 4
+        # каждый блок хранит __BLOCK_DENSITY байт
+        sz *= self.__BLOCK_DENSITY
+        # у заголовка обязательно есть 12 байт плюс 4 байта на каждую запись
+        # каждая запись так же содержит CRC код на 4 байта
+        sz -= 12 + 8 * count
+        return sz
 
 
 if __name__ == "__main__":
     c = DCTEncoder(lut_file="encoder_lut.hex")
+    print(c.max_data_size(1))
     data = np.random.randint(0, 255, 1000, dtype=np.uint8)
-    encoded = c.encode(data)
+    encoded = c.encode(data.tobytes())
     from PIL import Image
 
     Image.fromarray(encoded).save('result.jpeg')
     img = np.array(Image.open('result.jpeg'), dtype=np.uint8)
     decoded = c.decode(img)
-    print(np.array_equal(data, decoded[0]))
+    print(np.array_equal(data, np.frombuffer(decoded[0], dtype=np.uint8)))
