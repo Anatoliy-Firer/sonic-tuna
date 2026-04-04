@@ -1,73 +1,95 @@
 # sonic-tuna
-Sonic Tuna Project - проект виртуального тоннеля поверх онлайн конференций
+Sonic Tuna Project - проект виртуального тоннеля поверх онлайн конференций.
 
-## Использование --config
+## Установка
 
-Оба скрипта (`tuna-ip.py` и `tuna-server.py`) поддерживают аргумент `--config`, который позволяет указать путь до YAML файла с конфигурацией.
+Для установки Sonic Tuna как systemd сервиса используйте скрипт `install.py`. Скрипт требует прав администратора (root).
 
-Когда параметр `--config` указан, остальные параметры командной строки игнорируются, и их значения извлекаются из YAML файла.
-
-### tuna-ip.py
-
-Синтаксис: `tuna-ip.py {up,down} [--config <config-file.yaml>] [другие опции]`
-
-Пример конфига для команды `up`:
-
-```yaml
-address: 10.0.0.1/24
-user: sonic-tuna
-device: tuna
-mtu: 1400
-route_table: 8042
-create_user: false
-nat: wlan0
-```
-
-Пример конфига для команды `down`:
-
-```yaml
-device: tuna
-user: sonic-tuna
-route_table: 8042
-```
-
-Использование:
+### Базовая установка (рекомендуется)
 
 ```bash
-# С конфигом (остальные параметры игнорируются)
-python3 tuna-ip.py up --config config_up.yaml
-python3 tuna-ip.py down --config config_down.yaml
-
-# Без конфига (используются параметры командной строки)
-python3 tuna-ip.py up -a 10.0.0.1/24 -d tuna
-python3 tuna-ip.py down -d tuna
+sudo python3 install.py
 ```
 
-### tuna-server.py
+Будут использованы параметры по-умолчанию:
 
-Синтаксис: `tuna-server.py [--config <config-file.yaml>] [другие опции]`
+- Пользователь: `sonic-tuna`
+- IP адрес: `10.0.0.1`
+- URL конференции: (не указан)
 
-Пример конфига:
-
-```yaml
-device: tuna
-call_url: https://telemost.yandex.ru/j/88005553535
-frame_scale: 1
-frame_size: "256x256"
-fps: 20
-port: 8042
-mtu: 1400
-show_gui: false
-disable_reed_solomon: false
-log_level: INFO
-```
-
-Использование:
+### Установка с параметрами
 
 ```bash
-# С конфигом (остальные параметры игнорируются)
-python3 tuna-server.py --config config.yaml
+# Указать пользовательский IP адрес и URL конференции
+sudo python3 install.py --ip 10.0.0.1 --url "https://telemost.yandex.ru/j/12345678"
 
-# Без конфига (используются параметры командной строки)
-python3 tuna-server.py -d tuna --fps 20
+# Указать пользовательского пользователя
+sudo python3 install.py --user myuser --ip 10.0.0.1
+
+# Все параметры
+sudo python3 install.py -u myuser --ip 10.0.0.1 --url "https://telemost.yandex.ru/j/12345678"
 ```
+
+### Доступные параметры install.py
+
+- `-u, --user` — имя системного пользователя (по-умолчанию: `sonic-tuna`)
+- `--ip` — IP адрес сетевого интерфейса (по-умолчанию: `10.0.0.1`)
+- `--url` — ссылка на конференцию Яндекс Телемост (по-умолчанию: пусто)
+
+### Что делает установщик
+
+1. Создаёт системного пользователя `sonic-tuna`
+2. Копирует файлы проекта в `/home/sonic-tuna/`
+3. Создаёт виртуальное окружение Python и устанавливает зависимости
+4. Устанавливает Chromium для Playwright
+5. Создаёт конфигурационный файл `/etc/sonic-tuna/config.yaml`
+6. Создаёт systemd сервис `/etc/systemd/system/sonic-tuna.service`
+
+### Завершение установки
+
+После завершения установки необходимо отредактировать конфигурационный файл (он содержит описание всех доступных параметров):
+
+```bash
+sudo nano /etc/sonic-tuna/config.yaml
+```
+
+Затем запустить сервис:
+
+```bash
+sudo systemctl start sonic-tuna
+sudo systemctl enable sonic-tuna  # Для автозапуска при загрузке системы
+```
+
+## Удаление
+
+Для удаления Sonic Tuna из системы используйте скрипт `uninstall.py`. Скрипт требует прав администратора (root).
+
+### Удаление
+
+```bash
+sudo python3 uninstall.py
+```
+
+Будет использован пользователь по-умолчанию `sonic-tuna`.
+
+### Удаление с пользовательским пользователем
+
+```bash
+sudo python3 uninstall.py --user myuser
+```
+
+или
+
+```bash
+sudo python3 uninstall.py -u myuser
+```
+
+### Что делает удалитель
+
+1. Останавливает systemd сервис `sonic-tuna`
+2. Удаляет системного пользователя и его домашнюю директорию
+3. Удаляет конфигурационный файл `/etc/sonic-tuna/`
+4. Удаляет systemd сервис `/etc/systemd/system/sonic-tuna.service`
+5. Перезагружает конфигурацию systemd
+
+**Внимание:** Удаление необратимо и удалит всё, что было создано установщиком.
