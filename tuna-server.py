@@ -6,6 +6,7 @@ from asyncio import CancelledError
 
 import numpy as np
 import uvloop
+import yaml
 
 from src.browser import Browser
 from src.tun import Tunnel
@@ -99,9 +100,27 @@ def parse_resolution(value: str) -> tuple[int, int]:
 def parse_log_lever(lev: str) -> int:
     return logging.getLevelNamesMapping()[lev.strip().upper()]
 
+
+def load_config_from_yaml(config_file):
+    """Load configuration from YAML file and return as command-line arguments."""
+    try:
+        with open(config_file, 'r') as f:
+            config = yaml.safe_load(f)
+    except FileNotFoundError:
+        raise RuntimeError(f"Config file not found: {config_file}")
+    except yaml.YAMLError as e:
+        raise RuntimeError(f"Invalid YAML file: {config_file}: {e}")
+    
+    if not isinstance(config, dict):
+        raise RuntimeError(f"Config file must contain a dictionary at root level")
+    
+    return config
+
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(prog="tuna-server", description="Tuna Server")
+    
+    parser.add_argument("--config", type=str, help="Path to YAML config file (ignores other CLI arguments if provided)")
 
     parser.add_argument("-d", "--device", default="tuna", help="Virtual interface name")
     parser.add_argument("--call-url", type=str, default="https://telemost.yandex.ru/j/71720776790697",
@@ -125,4 +144,42 @@ if __name__ == '__main__':
     parser.add_argument("-l", "--log-level", type=parse_log_lever, default=logging.INFO,
                         choices=logging.getLevelNamesMapping().values(), help="Log level")
 
-    uvloop.run(main(parser.parse_args()))
+    args = parser.parse_args()
+    
+    # Handle --config parameter
+    if args.config:
+        try:
+            config = load_config_from_yaml(args.config)
+        except RuntimeError as error:
+            print(error)
+            exit(1)
+        
+        # Build command-line arguments from config
+        reconstructed_argv = []
+        
+        if 'device' in config:
+            reconstructed_argv.extend(['-d', config['device']])
+        if 'call_url' in config:
+            reconstructed_argv.extend(['--call-url', config['call_url']])
+        if 'frame_scale' in config:
+            reconstructed_argv.extend(['--frame-scale', str(config['frame_scale'])])
+        if 'frame_size' in config:
+            reconstructed_argv.extend(['--frame-size', config['frame_size']])
+        if 'fps' in config:
+            reconstructed_argv.extend(['--fps', str(config['fps'])])
+        if 'port' in config:
+            reconstructed_argv.extend(['-p', str(config['port'])])
+        if 'mtu' in config:
+            reconstructed_argv.extend(['--mtu', str(config['mtu'])])
+        if config.get('show_gui'):
+            reconstructed_argv.append('--show-gui')
+        if 'username' in config:
+            reconstructed_argv.extend(['--username', config['username']])
+        if config.get('disable_reed_solomon'):
+            reconstructed_argv.append('--disable-reed-solomon')
+        if 'log_level' in config:
+            reconstructed_argv.extend(['-l', config['log_level']])
+        
+        args = parser.parse_args(reconstructed_argv)
+
+    uvloop.run(main(args))

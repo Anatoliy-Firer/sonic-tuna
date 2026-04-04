@@ -4,6 +4,8 @@ import json
 import pwd
 import shutil
 import subprocess
+import yaml
+import sys
 
 AUTO_NAT_DEVICE = "__auto_nat_device__"
 
@@ -73,6 +75,22 @@ def normalize_interface_address(address):
     if "/" not in address:
         return f"{address}/24"
     return address
+
+
+def load_config_from_yaml(config_file):
+    """Load configuration from YAML file and return as command-line arguments."""
+    try:
+        with open(config_file, 'r') as f:
+            config = yaml.safe_load(f)
+    except FileNotFoundError:
+        raise RuntimeError(f"Config file not found: {config_file}")
+    except yaml.YAMLError as e:
+        raise RuntimeError(f"Invalid YAML file: {config_file}: {e}")
+    
+    if not isinstance(config, dict):
+        raise RuntimeError(f"Config file must contain a dictionary at root level")
+    
+    return config
 
 
 def get_user_rule_pref(route_table):
@@ -146,6 +164,8 @@ def cleanup_up_state(device, route_table, username):
 
 def main():
     parser = argparse.ArgumentParser(prog="tuna-ip", description="Sonic Tuna inet interface util")
+    
+    parser.add_argument("--config", type=str, help="Path to YAML config file (ignores other CLI arguments if provided)")
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -171,6 +191,59 @@ def main():
     down_parser.add_argument("--route-table", type=int, default=8042, help="Policy routing table used by gateway")
 
     args = parser.parse_args()
+    
+    # Handle --config parameter
+    if args.config:
+        try:
+            config = load_config_from_yaml(args.config)
+        except RuntimeError as error:
+            print(error)
+            return
+        
+        # Build command-line arguments from config
+        command = config.get('command')
+        if not command:
+            print("Config file must contain 'command' field (up or down)")
+            return
+        
+        if command == 'up':
+            # Reconstruct args for 'up' command
+            reconstructed_argv = ['up']
+            if 'address' in config:
+                reconstructed_argv.extend(['-a', config['address']])
+            if 'user' in config:
+                reconstructed_argv.extend(['-u', config['user']])
+            if config.get('create_user'):
+                reconstructed_argv.append('-c')
+            if 'device' in config:
+                reconstructed_argv.extend(['-d', config['device']])
+            if 'gateway' in config:
+                reconstructed_argv.extend(['-g', config['gateway']])
+            if 'nat' in config:
+                if config['nat'] is True:
+                    reconstructed_argv.append('--nat')
+                else:
+                    reconstructed_argv.extend(['--nat', config['nat']])
+            if 'mtu' in config:
+                reconstructed_argv.extend(['--mtu', str(config['mtu'])])
+            if 'route_table' in config:
+                reconstructed_argv.extend(['--route-table', str(config['route_table'])])
+            
+            args = parser.parse_args(reconstructed_argv)
+        elif command == 'down':
+            # Reconstruct args for 'down' command
+            reconstructed_argv = ['down']
+            if 'device' in config:
+                reconstructed_argv.extend(['-d', config['device']])
+            if 'user' in config:
+                reconstructed_argv.extend(['-u', config['user']])
+            if 'route_table' in config:
+                reconstructed_argv.extend(['--route-table', str(config['route_table'])])
+            
+            args = parser.parse_args(reconstructed_argv)
+        else:
+            print(f"Unknown command: {command}. Must be 'up' or 'down'")
+            return
 
     try:
         validate_args(args)

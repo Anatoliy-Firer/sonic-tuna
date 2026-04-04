@@ -4,3 +4,4 @@ playwright
 uvloop
 opencv-python
 reedsolo
+PyYAML
