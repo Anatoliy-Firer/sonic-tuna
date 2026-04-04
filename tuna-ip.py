@@ -2,8 +2,9 @@ import argparse
 import ipaddress
 import json
 import pwd
-import shutil
 import subprocess
+
+import yaml
 
 AUTO_NAT_DEVICE = "__auto_nat_device__"
 
@@ -45,12 +46,6 @@ def user_exists(username):
     except KeyError:
         return False
 
-
-def create_system_user(username):
-    nologin_shell = shutil.which("nologin") or "/usr/sbin/nologin"
-    return run_command(["sudo", "useradd", "-M", "-s", nologin_shell, username], check=False)
-
-
 def get_nat_table_name(route_table):
     return f"tuna_nat_{route_table}"
 
@@ -73,6 +68,22 @@ def normalize_interface_address(address):
     if "/" not in address:
         return f"{address}/24"
     return address
+
+
+def load_config_from_yaml(config_file):
+    """Load configuration from YAML file and return as command-line arguments."""
+    try:
+        with open(config_file, 'r') as f:
+            config = yaml.safe_load(f)
+    except FileNotFoundError:
+        raise RuntimeError(f"Config file not found: {config_file}")
+    except yaml.YAMLError as e:
+        raise RuntimeError(f"Invalid YAML file: {config_file}: {e}")
+    
+    if not isinstance(config, dict):
+        raise RuntimeError(f"Config file must contain a dictionary at root level")
+    
+    return config
 
 
 def get_user_rule_pref(route_table):
@@ -150,9 +161,9 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     up_parser = subparsers.add_parser("up", help="Create and up interface")
+    up_parser.add_argument("--config", type=str, help="Path to YAML config file (ignores other CLI arguments if provided)")
     up_parser.add_argument("-a", "--address", type=str, help="Ipv4 address with subnet")
     up_parser.add_argument("-u", "--user", type=str, default="sonic-tuna", help="System user, owner of interface")
-    up_parser.add_argument("-c", "--create-user", action="store_true", help="Create system user if not exists")
     up_parser.add_argument("-d", "--device", type=str, default="tuna", help="Interface name")
     up_parser.add_argument("-g", "--gateway", type=str, default=None, help="Gateway IP in the same subnet as --address")
     up_parser.add_argument(
@@ -166,11 +177,55 @@ def main():
                            help="Policy routing table used by gateway")
 
     down_parser = subparsers.add_parser("down", help="Turn off and remove interface")
+    down_parser.add_argument("--config", type=str, help="Path to YAML config file (ignores other CLI arguments if provided)")
     down_parser.add_argument("-d", "--device", type=str, default="tuna", help="Interface name")
     down_parser.add_argument("-u", "--user", type=str, default="sonic-tuna", help="System user, owner of interface")
     down_parser.add_argument("--route-table", type=int, default=8042, help="Policy routing table used by gateway")
 
     args = parser.parse_args()
+    
+    # Handle --config parameter
+    if args.command and getattr(args, 'config', None):
+        try:
+            config = load_config_from_yaml(args.config)
+        except RuntimeError as error:
+            print(error)
+            return
+        
+        # Build command-line arguments from config
+        if args.command == 'up':
+            # Reconstruct args for 'up' command
+            reconstructed_argv = ['up']
+            if 'address' in config:
+                reconstructed_argv.extend(['-a', config['address']])
+            if 'user' in config:
+                reconstructed_argv.extend(['-u', config['user']])
+            if 'device' in config:
+                reconstructed_argv.extend(['-d', config['device']])
+            if 'gateway' in config:
+                reconstructed_argv.extend(['-g', config['gateway']])
+            if 'nat' in config:
+                if config['nat'] is True:
+                    reconstructed_argv.append('--nat')
+                else:
+                    reconstructed_argv.extend(['--nat', config['nat']])
+            if 'mtu' in config:
+                reconstructed_argv.extend(['--mtu', str(config['mtu'])])
+            if 'route_table' in config:
+                reconstructed_argv.extend(['--route-table', str(config['route_table'])])
+            
+            args = parser.parse_args(reconstructed_argv)
+        elif args.command == 'down':
+            # Reconstruct args for 'down' command
+            reconstructed_argv = ['down']
+            if 'device' in config:
+                reconstructed_argv.extend(['-d', config['device']])
+            if 'user' in config:
+                reconstructed_argv.extend(['-u', config['user']])
+            if 'route_table' in config:
+                reconstructed_argv.extend(['--route-table', str(config['route_table'])])
+            
+            args = parser.parse_args(reconstructed_argv)
 
     try:
         validate_args(args)
@@ -189,19 +244,8 @@ def main():
             print(f"Invalid interface address: {args.address}")
             return
         if not user_exists(args.user):
-            if args.create_user:
-                create_result = create_system_user(args.user)
-                if create_result.returncode != 0:
-                    error_text = create_result.stderr.strip() or create_result.stdout.strip() or "unknown error"
-                    print(f"Failed to create user {args.user}: {error_text}")
-                    return
-                print(f"Created user {args.user}")
-            else:
-                print(
-                    f"User {args.user} does not exist. "
-                    "Use --create-user to create it automatically without a home directory and with nologin shell."
-                )
-                return
+            print(f"User {args.user} does not exist. ")
+            return
         if args.gateway:
             try:
                 validate_gateway_address(args.address, args.gateway)

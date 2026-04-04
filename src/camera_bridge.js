@@ -20,23 +20,18 @@ sourceCtx.imageSmoothingEnabled = false;
 const stream = canvas.captureStream(0);
 const [videoTrack] = stream.getVideoTracks();
 const frameQueue = [];
+const frameQueueLimit = 10;
 const outgoingFrameQueue = [];
 let socket = null;
 
 let color = 'rgb(255 0 0)';
-let emptyCountdown = 0;
 let emptyFrameAngle = 0.0;
 
 function drawEmptyFrame() {
-    if (emptyCountdown !== 0) {
-        emptyCountdown -= 1;
-        return;
-    }
     const red = Math.round(((Math.cos(emptyFrameAngle) + 1) / 2) * 255);
     const blue = Math.round(((Math.sin(emptyFrameAngle) + 1) / 2) * 255);
     color = `rgb(${red} 0 ${blue})`;
-    emptyFrameAngle += 0.1;
-    emptyCountdown = FPS;
+    emptyFrameAngle += 0.01;
 
     ctx.fillStyle = color;
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
@@ -66,7 +61,6 @@ function tick() {
     const nextFrame = frameQueue.shift();
     if (nextFrame) {
         drawFrame(nextFrame);
-        emptyCountdown = 0;
         return;
     }
 
@@ -112,6 +106,7 @@ function connectFrames() {
 
     currentSocket.onmessage = (event) => {
         frameQueue.push(new Uint8Array(event.data));
+        while (frameQueue.length > frameQueueLimit) frameQueue.shift();
     };
 
     currentSocket.onclose = () => {
