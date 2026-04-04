@@ -164,12 +164,11 @@ def cleanup_up_state(device, route_table, username):
 
 def main():
     parser = argparse.ArgumentParser(prog="tuna-ip", description="Sonic Tuna inet interface util")
-    
-    parser.add_argument("--config", type=str, help="Path to YAML config file (ignores other CLI arguments if provided)")
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     up_parser = subparsers.add_parser("up", help="Create and up interface")
+    up_parser.add_argument("--config", type=str, help="Path to YAML config file (ignores other CLI arguments if provided)")
     up_parser.add_argument("-a", "--address", type=str, help="Ipv4 address with subnet")
     up_parser.add_argument("-u", "--user", type=str, default="sonic-tuna", help="System user, owner of interface")
     up_parser.add_argument("-c", "--create-user", action="store_true", help="Create system user if not exists")
@@ -186,6 +185,7 @@ def main():
                            help="Policy routing table used by gateway")
 
     down_parser = subparsers.add_parser("down", help="Turn off and remove interface")
+    down_parser.add_argument("--config", type=str, help="Path to YAML config file (ignores other CLI arguments if provided)")
     down_parser.add_argument("-d", "--device", type=str, default="tuna", help="Interface name")
     down_parser.add_argument("-u", "--user", type=str, default="sonic-tuna", help="System user, owner of interface")
     down_parser.add_argument("--route-table", type=int, default=8042, help="Policy routing table used by gateway")
@@ -193,7 +193,7 @@ def main():
     args = parser.parse_args()
     
     # Handle --config parameter
-    if args.config:
+    if args.command and getattr(args, 'config', None):
         try:
             config = load_config_from_yaml(args.config)
         except RuntimeError as error:
@@ -201,12 +201,7 @@ def main():
             return
         
         # Build command-line arguments from config
-        command = config.get('command')
-        if not command:
-            print("Config file must contain 'command' field (up or down)")
-            return
-        
-        if command == 'up':
+        if args.command == 'up':
             # Reconstruct args for 'up' command
             reconstructed_argv = ['up']
             if 'address' in config:
@@ -230,7 +225,7 @@ def main():
                 reconstructed_argv.extend(['--route-table', str(config['route_table'])])
             
             args = parser.parse_args(reconstructed_argv)
-        elif command == 'down':
+        elif args.command == 'down':
             # Reconstruct args for 'down' command
             reconstructed_argv = ['down']
             if 'device' in config:
@@ -241,9 +236,6 @@ def main():
                 reconstructed_argv.extend(['--route-table', str(config['route_table'])])
             
             args = parser.parse_args(reconstructed_argv)
-        else:
-            print(f"Unknown command: {command}. Must be 'up' or 'down'")
-            return
 
     try:
         validate_args(args)

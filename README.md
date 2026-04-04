@@ -3,16 +3,17 @@ Sonic Tuna Project - проект виртуального тоннеля пов
 
 ## Использование --config
 
-Оба скрипта (`tuna-ip.py` и `tuna-server.py`) поддерживают аргумент командной строки `--config`, который позволяет указать путь до YAML файла с конфигурацией.
+Оба скрипта (`tuna-ip.py` и `tuna-server.py`) поддерживают аргумент `--config`, который позволяет указать путь до YAML файла с конфигурацией.
 
 Когда параметр `--config` указан, остальные параметры командной строки игнорируются, и их значения извлекаются из YAML файла.
 
 ### tuna-ip.py
 
+Синтаксис: `tuna-ip.py {up,down} [--config <config-file.yaml>] [другие опции]`
+
 Пример конфига для команды `up`:
 
 ```yaml
-command: up
 address: 10.0.0.1/24
 user: sonic-tuna
 device: tuna
@@ -25,7 +26,6 @@ nat: wlan0
 Пример конфига для команды `down`:
 
 ```yaml
-command: down
 device: tuna
 user: sonic-tuna
 route_table: 8042
@@ -34,10 +34,18 @@ route_table: 8042
 Использование:
 
 ```bash
-python3 tuna-ip.py --config config.yaml
+# С конфигом (остальные параметры игнорируются)
+python3 tuna-ip.py up --config config_up.yaml
+python3 tuna-ip.py down --config config_down.yaml
+
+# Без конфига (используются параметры командной строки)
+python3 tuna-ip.py up -a 10.0.0.1/24 -d tuna
+python3 tuna-ip.py down -d tuna
 ```
 
 ### tuna-server.py
+
+Синтаксис: `tuna-server.py [--config <config-file.yaml>] [другие опции]`
 
 Пример конфига:
 
@@ -57,5 +65,9 @@ log_level: INFO
 Использование:
 
 ```bash
+# С конфигом (остальные параметры игнорируются)
 python3 tuna-server.py --config config.yaml
+
+# Без конфига (используются параметры командной строки)
+python3 tuna-server.py -d tuna --fps 20
 ```
