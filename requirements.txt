@@ -3,3 +3,4 @@ NumPy
 playwright
 uvloop
 opencv-python
+reedsolo

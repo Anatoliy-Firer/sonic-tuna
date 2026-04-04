@@ -4,6 +4,7 @@ from typing import Iterable
 
 import cv2
 import numpy as np
+from reedsolo import RSCodec, ReedSolomonError
 
 from src.util.encoder import EncoderInterface
 
@@ -111,12 +112,14 @@ class Frame:
 
 
 class DCTEncoder(EncoderInterface):
-    def image_size(self) -> tuple[int, int]:
-        return self.__width * 8, self.__height * 8
-
     __BLOCK_DENSITY = 2
     __LUT_MAGIC = b'DCTL'
     __LUT_HEADER_FORMAT = '>4sf'
+
+    __redundancy = 32
+    __k = 255 - __redundancy
+    __nsym = __redundancy
+    __RSC = RSCodec(__nsym)
 
     __ENCODE_PATH = [(1, 0), (0, 1), (0, 2), (1, 1),
                      (2, 0), (3, 0), (2, 1), (1, 2),
@@ -130,7 +133,7 @@ class DCTEncoder(EncoderInterface):
     __LUT_SHAPE = (1 << 16, 8, 8, 3)
     __LUT_SIZE = int(np.prod(__LUT_SHAPE))
 
-    def __init__(self, width: int = 32, height: int = 32, amplitude: float = 40, lut_file: str | None = None):
+    def __init__(self, width: int = 32, height: int = 32, amplitude: float = 40, use_reed_solomon: bool = True):
         self.__width = width
         self.__height = height
         self.__amplitude = np.float32(amplitude)
@@ -143,10 +146,8 @@ class DCTEncoder(EncoderInterface):
                 (self.__width - 1, self.__height - 1),
             }
         ]
-        if lut_file is None:
-            self.__encode_lut = self.build_encode_lut(self.__amplitude)
-        else:
-            self.__encode_lut = self.__load_encode_lut(lut_file)
+        self.__use_reed_solomon = use_reed_solomon
+        self.__encode_lut = self.build_encode_lut(self.__amplitude)
 
     @staticmethod
     def __idct2d(block):
@@ -225,7 +226,8 @@ class DCTEncoder(EncoderInterface):
         result[:8, -8:, 1] = 255
         result[-8:, -8:, 2] = 255
 
-        pack = Frame.serialize(data)
+        ser = Frame.serialize(data)
+        pack = np.frombuffer(self.__RSC.encode(ser) if self.__use_reed_solomon else ser, dtype=np.uint8)
         if len(pack) % 2 == 1:
             pack = np.pad(pack, (0, 1))
         pack = pack.reshape((len(pack) // 2, 2))
@@ -262,15 +264,30 @@ class DCTEncoder(EncoderInterface):
                 yield word[1]
             return None
 
-        gen = get_bytes()
+        # скрывает процесс декодирования кода Рида Соломона от последующих этапов алгоритма
+        def get_byte_decoded():
+            itr = get_bytes()
+            while True:
+                buf = np.fromiter(itr, dtype=np.uint8, count=255)
+                try:
+                    dec, _, _ = self.__RSC.decode(buf)
+                except ReedSolomonError:
+                    # если восстановление кодом Рида Соломона не удалось - отдаем данные как есть
+                    # надеемся, что код CRC32 отбросит повреждения
+                    dec = buf[:self.__k]
+                for bt in dec:
+                    yield bt
+
+        gen = get_byte_decoded() if self.__use_reed_solomon else get_bytes()
 
         total, offsets = Frame.parse_header(gen)
-
         if not total or not offsets:
             return []
-
         raw = np.fromiter(gen, dtype=np.uint8, count=total)
         return Frame.extract_payload(raw, offsets)
+
+    def image_size(self) -> tuple[int, int]:
+        return self.__width * 8, self.__height * 8
 
     def max_data_size(self, count: int) -> int:
         # всего блоков без учёта угловых сигнатурных
@@ -280,17 +297,18 @@ class DCTEncoder(EncoderInterface):
         # у заголовка обязательно есть 12 байт плюс 4 байта на каждую запись
         # каждая запись так же содержит CRC код на 4 байта
         sz -= 12 + 8 * count
-        return sz
+        # всё сообщение целиком будет закодировано кодами Рида Соломона, что значит, что на 255 байт информации
+        # будет 32 байта защиты
+        return sz - (1 + sz // 255) * 32 if self.__use_reed_solomon else sz
 
 
 if __name__ == "__main__":
-    c = DCTEncoder(lut_file="encoder_lut.hex")
+    c = DCTEncoder()
     print(c.max_data_size(1))
     data = np.random.randint(0, 255, 1000, dtype=np.uint8)
     encoded = c.encode(data.tobytes())
-    from PIL import Image
 
-    Image.fromarray(encoded).save('result.jpeg')
-    img = np.array(Image.open('result.jpeg'), dtype=np.uint8)
+    cv2.imwrite('result.jpeg', encoded, [int(cv2.IMWRITE_JPEG_QUALITY), 100])
+    img = cv2.imread('result.jpeg')
     decoded = c.decode(img)
     print(np.array_equal(data, np.frombuffer(decoded[0], dtype=np.uint8)))

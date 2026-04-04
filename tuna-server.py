@@ -39,16 +39,18 @@ async def ws_to_tun(tunnel: Tunnel, ws: WebSocketServer, codec: EncoderInterface
 
 
 async def main(args: argparse.Namespace):
-    browser = Browser(args.port, args.frame_width, args.frame_height, args.frame_scale, args.fps, args.call_url,
-                      args.user)
+    width, height = args.frame_size
+
+    browser = Browser(args.port, width, height, args.frame_scale, args.fps, args.call_url, args.user)
     tunnel = Tunnel(args.device, args.mtu)
-    websocket = WebSocketServer(args.frame_width * args.frame_height * 3, args.port)
+    websocket = WebSocketServer(width * height * 3, args.port)
 
     ws_server = asyncio.create_task(websocket.start())
 
     browser_task = asyncio.create_task(browser.start_browser(not args.show_gui))
 
-    codec = DCTEncoder(args.frame_width // 8, args.frame_height // 8, 20, 'src/util/encoder_lut.hex')
+    codec = DCTEncoder(width // 8, height // 8, 40,
+                       use_reed_solomon=not args.disable_reed_solomon)
 
     tun_to_ws_task = asyncio.create_task(tun_to_ws(tunnel, websocket, args.fps, codec))
     ws_to_tun_task = asyncio.create_task(ws_to_tun(tunnel, websocket, codec))
@@ -70,20 +72,43 @@ async def main(args: argparse.Namespace):
         await asyncio.gather(browser_task, tun_to_ws_task, ws_to_tun_task, ws_server, return_exceptions=True)
 
 
+def parse_resolution(value: str) -> tuple[int, int]:
+    try:
+        size = value.lower().split("x", 1)
+        width = int(size[0])
+        height = int(size[1]) if len(size) > 1 else width
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"Resolution must look like <int> or <int>x<int>, got {value!r}"
+        ) from exc
+
+    if width <= 0 or height <= 0:
+        raise argparse.ArgumentTypeError("Resolution values must be positive")
+    if width % 16 != 0 or height % 16 != 0:
+        raise argparse.ArgumentTypeError("Resolution width and height must be divisible by 16")
+
+    return width, height
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog="tuna-server", description="Tuna Server")
 
     parser.add_argument("-d", "--device", default="tuna", help="Virtual interface name")
-    parser.add_argument("--frame-width", type=int, default=256, help="Frame width")
     parser.add_argument("--call-url", type=str, default="https://telemost.yandex.ru/j/71720776790697",
                         help="Yandex Telemost conference url")
-    parser.add_argument("--frame-height", type=int, default=256, help="Frame height")
     parser.add_argument("--frame-scale", type=int, default=1, help="Frame scale")
+    parser.add_argument(
+        "--frame-size",
+        type=parse_resolution,
+        default=(256, 256),
+        help=f"Video resolution in WIDTHxHEIGHT format. Default: 256x256",
+    )
     parser.add_argument("--fps", type=int, default=20, help="Frame rate")
     parser.add_argument("-p", "--port", type=int, default=8042, help="Internal websocket port")
     parser.add_argument("--mtu", type=int, default=1400, help="MTU")
     parser.add_argument("--show-gui", action='store_true', help="Show chromium GUI")
     parser.add_argument("--user", type=str, default=None,
                         help="Username at Yandex Telemost conference. Default is current system user")
+    parser.add_argument("--disable-reed-solomon", action='store_true',
+                        help="Disable Reed Solomon error correction (for weak computers)")
 
     uvloop.run(main(parser.parse_args()))
