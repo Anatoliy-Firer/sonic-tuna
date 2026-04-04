@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import logging
 import struct
 from asyncio import CancelledError
 
@@ -34,14 +35,19 @@ async def ws_to_tun(tunnel: Tunnel, ws: WebSocketServer, codec: EncoderInterface
                 tunnel.push_package(pack)
             except CancelledError:
                 raise
-            except Exception:
+            except Exception as e:
+                logging.debug('Packet dropped {}', e)
                 pass
 
 
 async def main(args: argparse.Namespace):
+    logging.basicConfig(
+        level=args.log_level,
+        format='[%(asctime)s] [%(levelname)s] %(message)s'
+    )
     width, height = args.frame_size
 
-    browser = Browser(args.port, width, height, args.frame_scale, args.fps, args.call_url, args.user)
+    browser = Browser(args.port, width, height, args.frame_scale, args.fps, args.call_url, args.username)
     tunnel = Tunnel(args.device, args.mtu)
     websocket = WebSocketServer(width * height * 3, args.port)
 
@@ -89,7 +95,12 @@ def parse_resolution(value: str) -> tuple[int, int]:
 
     return width, height
 
+
+def parse_log_lever(lev: str) -> int:
+    return logging.getLevelNamesMapping()[lev.strip().upper()]
+
 if __name__ == '__main__':
+
     parser = argparse.ArgumentParser(prog="tuna-server", description="Tuna Server")
 
     parser.add_argument("-d", "--device", default="tuna", help="Virtual interface name")
@@ -106,9 +117,12 @@ if __name__ == '__main__':
     parser.add_argument("-p", "--port", type=int, default=8042, help="Internal websocket port")
     parser.add_argument("--mtu", type=int, default=1400, help="MTU")
     parser.add_argument("--show-gui", action='store_true', help="Show chromium GUI")
-    parser.add_argument("--user", type=str, default=None,
+    parser.add_argument("--username", type=str, default=None,
                         help="Username at Yandex Telemost conference. Default is current system user")
     parser.add_argument("--disable-reed-solomon", action='store_true',
                         help="Disable Reed Solomon error correction (for weak computers)")
+
+    parser.add_argument("-l", "--log-level", type=parse_log_lever, default=logging.INFO,
+                        choices=logging.getLevelNamesMapping().values(), help="Log level")
 
     uvloop.run(main(parser.parse_args()))

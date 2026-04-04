@@ -146,7 +146,7 @@ class DCTEncoder(EncoderInterface):
                 (self.__width - 1, self.__height - 1),
             }
         ]
-        self.__use_reed_solomon = use_reed_solomon
+        self.__use_rs = use_reed_solomon
         self.__encode_lut = self.build_encode_lut(self.__amplitude)
 
     @staticmethod
@@ -174,30 +174,6 @@ class DCTEncoder(EncoderInterface):
             lut[value, :, :, 2] = y_mat
 
         return lut
-
-    @classmethod
-    def save_encode_lut(cls, path: str, amplitude: float) -> None:
-        lut = cls.build_encode_lut(amplitude)
-        with open(path, 'wb') as fp:
-            fp.write(struct.pack(cls.__LUT_HEADER_FORMAT, cls.__LUT_MAGIC, float(amplitude)))
-            fp.write(lut.tobytes())
-
-    @classmethod
-    def __load_encode_lut(cls, path: str) -> np.ndarray:
-        header_size = struct.calcsize(cls.__LUT_HEADER_FORMAT)
-        with open(path, 'rb') as fp:
-            header = fp.read(header_size)
-            if len(header) != header_size:
-                raise ValueError("LUT file is truncated")
-            magic, _amplitude = struct.unpack(cls.__LUT_HEADER_FORMAT, header)
-            if magic != cls.__LUT_MAGIC:
-                raise ValueError("Invalid LUT file magic")
-            lut = np.frombuffer(fp.read(), dtype=np.uint8)
-
-        if lut.size != cls.__LUT_SIZE:
-            raise ValueError(f"Invalid LUT payload size: expected {cls.__LUT_SIZE}, got {lut.size}")
-
-        return lut.reshape(cls.__LUT_SHAPE)
 
     def encode_block(self, word: np.ndarray) -> np.ndarray:
         """Преобразует 2 байт в матрицу 8x8 в формате RGB"""
@@ -227,7 +203,7 @@ class DCTEncoder(EncoderInterface):
         result[-8:, -8:, 2] = 255
 
         ser = Frame.serialize(data)
-        pack = np.frombuffer(self.__RSC.encode(ser) if self.__use_reed_solomon else ser, dtype=np.uint8)
+        pack = np.frombuffer(self.__RSC.encode(ser) if self.__use_rs else ser, dtype=np.uint8)
         if len(pack) % 2 == 1:
             pack = np.pad(pack, (0, 1))
         pack = pack.reshape((len(pack) // 2, 2))
@@ -278,7 +254,7 @@ class DCTEncoder(EncoderInterface):
                 for bt in dec:
                     yield bt
 
-        gen = get_byte_decoded() if self.__use_reed_solomon else get_bytes()
+        gen = get_byte_decoded() if self.__use_rs else get_bytes()
 
         total, offsets = Frame.parse_header(gen)
         if not total or not offsets:
@@ -299,7 +275,7 @@ class DCTEncoder(EncoderInterface):
         sz -= 12 + 8 * count
         # всё сообщение целиком будет закодировано кодами Рида Соломона, что значит, что на 255 байт информации
         # будет 32 байта защиты
-        return sz - (1 + sz // 255) * 32 if self.__use_reed_solomon else sz
+        return sz - (1 + sz // 255) * 32 if self.__use_rs else sz
 
 
 if __name__ == "__main__":
