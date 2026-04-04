@@ -2,10 +2,9 @@ import argparse
 import ipaddress
 import json
 import pwd
-import shutil
 import subprocess
+
 import yaml
-import sys
 
 AUTO_NAT_DEVICE = "__auto_nat_device__"
 
@@ -46,12 +45,6 @@ def user_exists(username):
         return True
     except KeyError:
         return False
-
-
-def create_system_user(username):
-    nologin_shell = shutil.which("nologin") or "/usr/sbin/nologin"
-    return run_command(["sudo", "useradd", "-M", "-s", nologin_shell, username], check=False)
-
 
 def get_nat_table_name(route_table):
     return f"tuna_nat_{route_table}"
@@ -171,7 +164,6 @@ def main():
     up_parser.add_argument("--config", type=str, help="Path to YAML config file (ignores other CLI arguments if provided)")
     up_parser.add_argument("-a", "--address", type=str, help="Ipv4 address with subnet")
     up_parser.add_argument("-u", "--user", type=str, default="sonic-tuna", help="System user, owner of interface")
-    up_parser.add_argument("-c", "--create-user", action="store_true", help="Create system user if not exists")
     up_parser.add_argument("-d", "--device", type=str, default="tuna", help="Interface name")
     up_parser.add_argument("-g", "--gateway", type=str, default=None, help="Gateway IP in the same subnet as --address")
     up_parser.add_argument(
@@ -208,8 +200,6 @@ def main():
                 reconstructed_argv.extend(['-a', config['address']])
             if 'user' in config:
                 reconstructed_argv.extend(['-u', config['user']])
-            if config.get('create_user'):
-                reconstructed_argv.append('-c')
             if 'device' in config:
                 reconstructed_argv.extend(['-d', config['device']])
             if 'gateway' in config:
@@ -254,19 +244,8 @@ def main():
             print(f"Invalid interface address: {args.address}")
             return
         if not user_exists(args.user):
-            if args.create_user:
-                create_result = create_system_user(args.user)
-                if create_result.returncode != 0:
-                    error_text = create_result.stderr.strip() or create_result.stdout.strip() or "unknown error"
-                    print(f"Failed to create user {args.user}: {error_text}")
-                    return
-                print(f"Created user {args.user}")
-            else:
-                print(
-                    f"User {args.user} does not exist. "
-                    "Use --create-user to create it automatically without a home directory and with nologin shell."
-                )
-                return
+            print(f"User {args.user} does not exist. ")
+            return
         if args.gateway:
             try:
                 validate_gateway_address(args.address, args.gateway)

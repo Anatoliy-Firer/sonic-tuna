@@ -51,7 +51,7 @@ python3 tuna-ip.py down -d tuna
 
 ```yaml
 device: tuna
-call_url: https://telemost.yandex.ru/j/71720776790697
+call_url: https://telemost.yandex.ru/j/88005553535
 frame_scale: 1
 frame_size: "256x256"
 fps: 20

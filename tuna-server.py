@@ -171,8 +171,6 @@ if __name__ == '__main__':
             reconstructed_argv.extend(['-p', str(config['port'])])
         if 'mtu' in config:
             reconstructed_argv.extend(['--mtu', str(config['mtu'])])
-        if config.get('show_gui'):
-            reconstructed_argv.append('--show-gui')
         if 'username' in config:
             reconstructed_argv.extend(['--username', config['username']])
         if config.get('disable_reed_solomon'):

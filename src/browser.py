@@ -25,7 +25,7 @@ class Browser(AbstractContextManager):
 
     async def start_browser(self, headless: bool = True):
         process = await asyncio.create_subprocess_exec(
-            'playwright', 'install', 'chromium',
+            '.venv/bin/playwright', 'install', 'chromium',
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
