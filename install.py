@@ -8,7 +8,11 @@ import os
 import pwd
 import random
 import shutil
+import subprocess
 
+__FILES_TO_INSTALL = ['tuna-ip.py', 'tuna-server.py', 'requirements.txt', 'src/util/batch_generator.py',
+                      'src/util/dct_encoder.py', 'src/util/encoder.py', 'src/browser.py', 'src/camera_bridge.js',
+                      'src/input_cameras.js', 'src/tun.py', 'src/ws_server.py']
 
 def user_exists(username):
     try:
@@ -20,9 +24,10 @@ def user_exists(username):
 
 def exec_command(command):
     print(f'[#] {command}')
-    res = os.system(command)
-    if res != 0:
-        raise RuntimeError(f'Failed to execute...')
+    result = subprocess.run(command, shell=True, capture_output=True, text=True)
+    if result.returncode != 0:
+        error_message = result.stderr if result.stderr else result.stdout
+        raise RuntimeError(f'Failed to execute: {error_message}')
 
 
 def install(args: argparse.Namespace):
@@ -34,9 +39,7 @@ def install(args: argparse.Namespace):
     exec_command(f'useradd -s {nologin_shell} {args.user}')
     exec_command(f'mkdir /home/{args.user}')
     exec_command(f'chown {args.user} /home/{args.user}')
-    for file in ['tuna-ip.py', 'tuna-server.py', 'requirements.txt', 'src/util/batch_generator.py',
-                 'src/util/dct_encoder.py', 'src/util/encoder.py', 'src/browser.py', 'src/camera_bridge.js',
-                 'src/input_cameras.js', 'src/tun.py', 'src/ws_server.py']:
+    for file in __FILES_TO_INSTALL:
         exec_command(f'install -D -o {args.user} -g {args.user} {file} /home/{args.user}/{file}')
 
     exec_command(f'sudo -u {args.user} python3 -m venv /home/{args.user}/.venv')
@@ -115,9 +118,7 @@ def update(args: argparse.Namespace):
         print('Exiting...')
         return
     exec_command('systemctl stop sonic-tuna')
-    for file in ['tuna-ip.py', 'tuna-server.py', 'requirements.txt', 'src/util/batch_generator.py',
-                 'src/util/dct_encoder.py', 'src/util/encoder.py', 'src/browser.py', 'src/camera_bridge.js',
-                 'src/input_cameras.js', 'src/tun.py', 'src/ws_server.py']:
+    for file in __FILES_TO_INSTALL:
         exec_command(f'install -D -o {args.user} -g {args.user} {file} /home/{args.user}/{file}')
 
     print('Updating completed. You can start Tuna by command "sudo systemctl start sonic-tuna"')
