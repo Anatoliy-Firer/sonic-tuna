@@ -1,0 +1,290 @@
+import struct
+import zlib
+from typing import Iterable
+
+import cv2
+import numpy as np
+from reedsolo import RSCodec, ReedSolomonError
+
+from src.util.encoder import EncoderInterface
+
+
+class Frame:
+    __MAGIC = b'TUNA'
+
+    @staticmethod
+    def serialize(data: list[bytes]) -> np.ndarray:
+        N = len(data)
+
+        # Считаем размер payload
+        total_payload_len = sum(len(b) + 4 for b in data)
+
+        header = bytearray()
+        header.extend(Frame.__MAGIC)
+        header.extend(struct.pack('>H', N))
+        header.extend(struct.pack('>H', total_payload_len))
+
+        # entries (offset, length)
+        offset = 0
+        entries = bytearray()
+        for b in data:
+            length = len(b)
+            entries.extend(struct.pack('>HH', offset, length))
+            offset += length + 4
+
+        header.extend(entries)
+
+        # CRC заголовка
+        header_crc = zlib.crc32(header)
+        header.extend(struct.pack('>I', header_crc))
+
+        # payload
+        payload = bytearray()
+        for b in data:
+            payload.extend(b)
+            payload.extend(struct.pack('>I', zlib.crc32(b)))
+
+        return np.frombuffer(header + payload, dtype=np.uint8)
+
+    @staticmethod
+    def parse_header(stream: Iterable[int]) -> tuple[int | None, list[tuple[int, int]] | None]:
+        it = iter(stream)
+
+        def read_n(n: int) -> bytes:
+            return bytes([next(it) for _ in range(n)])
+
+        try:
+            magic = read_n(4)
+
+            if magic != Frame.__MAGIC:
+                return None, None
+
+            n_bytes = read_n(2)
+            N = struct.unpack('>H', n_bytes)[0]
+
+            total_len_bytes = read_n(2)
+            total_payload_len = struct.unpack('>H', total_len_bytes)[0]
+
+            entries_raw = read_n(N * 4)
+
+            header = bytearray()
+            header.extend(magic)
+            header.extend(n_bytes)
+            header.extend(total_len_bytes)
+            header.extend(entries_raw)
+
+            stored_crc_bytes = read_n(4)
+            stored_crc = struct.unpack('>I', stored_crc_bytes)[0]
+
+            if zlib.crc32(header) != stored_crc:
+                return None, None
+            entries = []
+            for i in range(N):
+                offset, length = struct.unpack(
+                    '>HH',
+                    entries_raw[i * 4:(i + 1) * 4]
+                )
+                entries.append((offset, length))
+
+            return total_payload_len, entries
+
+        except StopIteration:
+            return None, None
+
+    @staticmethod
+    def extract_payload(payload: np.ndarray, entries: list[tuple[int, int]]) -> list[bytes]:
+        raw = payload.tobytes()
+
+        result = []
+
+        for offset, length in entries:
+            start = offset
+            end = start + length
+
+            if end + 4 > len(raw):
+                continue  # выход за границы
+            data_bytes = raw[start:end]
+            stored_crc = struct.unpack('>I', raw[end:end + 4])[0]
+            if zlib.crc32(data_bytes) == stored_crc:
+                result.append(data_bytes)
+
+        return result
+
+
+class DCTEncoder(EncoderInterface):
+    __BLOCK_DENSITY = 2
+    __LUT_MAGIC = b'DCTL'
+    __LUT_HEADER_FORMAT = '>4sf'
+
+    __redundancy = 32
+    __k = 255 - __redundancy
+    __nsym = __redundancy
+    __RSC = RSCodec(__nsym)
+
+    __ENCODE_PATH = [(1, 0), (0, 1), (0, 2), (1, 1),
+                     (2, 0), (3, 0), (2, 1), (1, 2),
+                     (0, 3), (0, 4), (1, 3), (2, 2),
+                     (3, 1), (4, 0), (4, 1), (1, 4)]
+
+    __SIGNATURE_DISTANCE_THRESHOLD = 50
+
+    __PATH_X = np.array([x for x, _ in __ENCODE_PATH], dtype=np.intp)
+    __PATH_Y = np.array([y for _, y in __ENCODE_PATH], dtype=np.intp)
+    __LUT_SHAPE = (1 << 16, 8, 8, 3)
+    __LUT_SIZE = int(np.prod(__LUT_SHAPE))
+
+    def __init__(self, width: int = 32, height: int = 32, amplitude: float = 40, use_reed_solomon: bool = True):
+        self.__width = width
+        self.__height = height
+        self.__amplitude = np.float32(amplitude)
+        self.__positions = [
+            pos for pos in np.ndindex(self.__width, self.__height)
+            if pos not in {
+                (0, 0),
+                (self.__width - 1, 0),
+                (0, self.__height - 1),
+                (self.__width - 1, self.__height - 1),
+            }
+        ]
+        self.__use_rs = use_reed_solomon
+        self.__encode_lut = self.build_encode_lut(self.__amplitude)
+
+    @staticmethod
+    def __idct2d(block):
+        return cv2.idct(block)
+
+    @staticmethod
+    def __dct2d(block):
+        return cv2.dct(block)
+
+    @classmethod
+    def build_encode_lut(cls, amplitude: float) -> np.ndarray:
+        amplitude = np.float32(amplitude)
+        lut = np.empty(cls.__LUT_SHAPE, dtype=np.uint8)
+
+        for value in range(1 << 16):
+            word = np.array([value >> 8, value & 0xFF], dtype=np.uint8)
+            bits = np.unpackbits(word)
+            y_mat = np.zeros((8, 8), dtype=np.float32)
+            y_mat[cls.__PATH_X, cls.__PATH_Y] = np.where(bits, amplitude, -amplitude)
+            y_mat = np.clip(cv2.idct(y_mat) + 128, 0, 255).astype(np.uint8)
+
+            lut[value, :, :, 0] = y_mat
+            lut[value, :, :, 1] = y_mat
+            lut[value, :, :, 2] = y_mat
+
+        return lut
+
+    def encode_block(self, word: np.ndarray) -> np.ndarray:
+        """Преобразует 2 байт в матрицу 8x8 в формате RGB"""
+        index = (int(word[0]) << 8) | int(word[1])
+        return self.__encode_lut[index]
+
+    def decode_block(self, y_block: np.ndarray) -> np.ndarray:
+        """Преобразует 2 байт в матрицу 8x8 в формате RGB"""
+        # получаем биты
+        y_mat = self.__dct2d(y_block.astype(np.float32) - 128.0)
+        return np.uint8(np.packbits(y_mat[self.__PATH_X, self.__PATH_Y] > 0.0))
+
+    def encode(self, data: list[bytes]) -> np.ndarray:
+        if isinstance(data, bytes):
+            data = [data]
+
+        total_len = np.sum([len(x) for x in data])
+        if total_len > self.max_data_size(len(data)):
+            raise ValueError(
+                f"Слишком много данных. Максимум для текущих настроек: {self.max_data_size(len(data))} байт, передано {total_len} байт")
+
+        result = np.zeros((self.__width * 8, self.__height * 8, 3), dtype=np.uint8)
+        # сигнатура кадра - 4 квадрата по углам, белый, красный, зеленый и синий
+        result[:8, :8, :] = 255
+        result[-8:, :8, 0] = 255
+        result[:8, -8:, 1] = 255
+        result[-8:, -8:, 2] = 255
+
+        ser = Frame.serialize(data)
+        pack = np.frombuffer(self.__RSC.encode(ser) if self.__use_rs else ser, dtype=np.uint8)
+        if len(pack) % 2 == 1:
+            pack = np.pad(pack, (0, 1))
+        pack = pack.reshape((len(pack) // 2, 2))
+        for pos, pair in zip(self.__positions, pack):
+            result[pos[0] * 8: pos[0] * 8 + 8, pos[1] * 8: pos[1] * 8 + 8] = self.encode_block(pair)
+
+        return result
+
+    __LT = np.array([255, 255, 255], dtype=np.uint8)
+    __RT = np.array([255, 0, 0], dtype=np.uint8)
+    __LB = np.array([0, 255, 0], dtype=np.uint8)
+    __RB = np.array([0, 0, 255], dtype=np.uint8)
+
+    def decode(self, frame: np.ndarray) -> list[bytes]:
+        result = []
+        # сначала сверяем сигнатуру
+        lt = frame[:7, :7].mean(axis=(0, 1))
+        rt = frame[-7:, :7].mean(axis=(0, 1))
+        lb = frame[:7, -7:].mean(axis=(0, 1))
+        rb = frame[-7:, -7:].mean(axis=(0, 1))
+        if (np.linalg.norm(self.__LT - lt) > self.__SIGNATURE_DISTANCE_THRESHOLD or
+                np.linalg.norm(self.__RT - rt) > self.__SIGNATURE_DISTANCE_THRESHOLD or
+                np.linalg.norm(self.__LB - lb) > self.__SIGNATURE_DISTANCE_THRESHOLD or
+                np.linalg.norm(self.__RB - rb) > self.__SIGNATURE_DISTANCE_THRESHOLD):
+            return result
+
+        y_plane = cv2.cvtColor(frame, cv2.COLOR_RGB2YCrCb)[:, :, 0]
+        pgn = iter(self.__positions)
+
+        def get_bytes():
+            while (pos := next(pgn, None)) is not None:
+                word = self.decode_block(y_plane[pos[0] * 8: pos[0] * 8 + 8, pos[1] * 8: pos[1] * 8 + 8])
+                yield word[0]
+                yield word[1]
+            return None
+
+        # скрывает процесс декодирования кода Рида Соломона от последующих этапов алгоритма
+        def get_byte_decoded():
+            itr = get_bytes()
+            while True:
+                buf = np.fromiter(itr, dtype=np.uint8, count=255)
+                try:
+                    dec, _, _ = self.__RSC.decode(buf)
+                except ReedSolomonError:
+                    # если восстановление кодом Рида Соломона не удалось - отдаем данные как есть
+                    # надеемся, что код CRC32 отбросит повреждения
+                    dec = buf[:self.__k]
+                for bt in dec:
+                    yield bt
+
+        gen = get_byte_decoded() if self.__use_rs else get_bytes()
+
+        total, offsets = Frame.parse_header(gen)
+        if not total or not offsets:
+            return []
+        raw = np.fromiter(gen, dtype=np.uint8, count=total)
+        return Frame.extract_payload(raw, offsets)
+
+    def image_size(self) -> tuple[int, int]:
+        return self.__width * 8, self.__height * 8
+
+    def max_data_size(self, count: int) -> int:
+        # всего блоков без учёта угловых сигнатурных
+        sz = self.__width * self.__height - 4
+        # каждый блок хранит __BLOCK_DENSITY байт
+        sz *= self.__BLOCK_DENSITY
+        # у заголовка обязательно есть 12 байт плюс 4 байта на каждую запись
+        # каждая запись так же содержит CRC код на 4 байта
+        sz -= 12 + 8 * count
+        # всё сообщение целиком будет закодировано кодами Рида Соломона, что значит, что на 255 байт информации
+        # будет 32 байта защиты
+        return sz - (1 + sz // 255) * 32 if self.__use_rs else sz
+
+
+if __name__ == "__main__":
+    c = DCTEncoder()
+    print(c.max_data_size(1))
+    data = np.random.randint(0, 255, 1000, dtype=np.uint8)
+    encoded = c.encode(data.tobytes())
+
+    cv2.imwrite('result.jpeg', encoded, [int(cv2.IMWRITE_JPEG_QUALITY), 100])
+    img = cv2.imread('result.jpeg')
+    decoded = c.decode(img)
+    print(np.array_equal(data, np.frombuffer(decoded[0], dtype=np.uint8)))
