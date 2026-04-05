@@ -4,6 +4,7 @@ from typing import Iterable
 
 import cv2
 import numpy as np
+from numba import njit
 from reedsolo import RSCodec, ReedSolomonError
 
 from src.util.encoder import EncoderInterface
@@ -137,7 +138,7 @@ class DCTEncoder(EncoderInterface):
         self.__width = width
         self.__height = height
         self.__amplitude = np.float32(amplitude)
-        self.__positions = [
+        self.__positions = np.array([
             pos for pos in np.ndindex(self.__width, self.__height)
             if pos not in {
                 (0, 0),
@@ -145,9 +146,11 @@ class DCTEncoder(EncoderInterface):
                 (0, self.__height - 1),
                 (self.__width - 1, self.__height - 1),
             }
-        ]
+        ])
         self.__use_rs = use_reed_solomon
         self.__encode_lut = self.build_encode_lut(self.__amplitude)
+        self.__dct_core = DCTEncoder.create_dtc_core()
+        self.__dct_core_t = self.__dct_core.T
 
     @staticmethod
     def __idct2d(block):
@@ -180,11 +183,64 @@ class DCTEncoder(EncoderInterface):
         index = (int(word[0]) << 8) | int(word[1])
         return self.__encode_lut[index]
 
-    def decode_block(self, y_block: np.ndarray) -> np.ndarray:
+    @staticmethod
+    def create_dtc_core():
+        core = np.zeros((8, 8))
+        for i in range(8):
+            for j in range(8):
+                if i == 0:
+                    core[i, j] = 1 / np.sqrt(8)
+                else:
+                    core[i, j] = np.sqrt(2 / 8) * np.cos(np.pi * i * (2 * j + 1) / (2 * 8))
+        return core
+
+    @staticmethod
+    @njit(fastmath=True)
+    def fast_dct_blocks_numba(matrix, c, ct):
+        matrix -= 128.0
+        n = matrix.shape[0]
+        num_blocks = n // 8
+        res = np.empty((n, n), dtype=matrix.dtype)
+        block = np.empty((8, 8), dtype=matrix.dtype)
+        # В Numba вложенные циклы компилируются в эффективный машинный код
+        for i in range(num_blocks):
+            row_offset = i * 8
+            for j in range(num_blocks):
+                col_offset = j * 8
+
+                # Извлекаем блок
+                block[:, :] = matrix[row_offset:row_offset + 8, col_offset:col_offset + 8]
+
+                # Матричное умножение DCT: C * Block * C.T
+                # Оператор @ поддерживается Numba
+                res[row_offset:row_offset + 8, col_offset:col_offset + 8] = c @ block @ ct
+
+        return res
+
+    @staticmethod
+    @njit(fastmath=True)
+    def decode_block(y_block: np.ndarray, path_x: np.ndarray, path_y: np.ndarray) -> np.ndarray:
         """Преобразует 2 байт в матрицу 8x8 в формате RGB"""
         # получаем биты
-        y_mat = self.__dct2d(y_block.astype(np.float32) - 128.0)
-        return np.uint8(np.packbits(y_mat[self.__PATH_X, self.__PATH_Y] > 0.0))
+        # y_mat = self.__dct2d(y_block.astype(np.float32) - 128.0)
+        bits = np.empty(16, dtype=np.bool)
+        for i in range(16):
+            bits[i] = y_block[path_x[i], path_y[i]] > 0.0
+        result = np.empty(2, dtype=np.uint8)
+        result[0] = (bits[0] << 7) | (bits[1] << 6) | (bits[2] << 5) | (bits[3] << 4) | (bits[4] << 3) | (
+                bits[5] << 2) | (bits[6] << 1) | (bits[7])
+        result[1] = (bits[8] << 7) | (bits[9] << 6) | (bits[10] << 5) | (bits[11] << 4) | (bits[12] << 3) | (
+                bits[13] << 2) | (bits[14] << 1) | (bits[15])
+        return result
+
+    @staticmethod
+    @njit(fastmath=True)
+    def pre_decode(count: int, density: int, y: np.ndarray, path: np.ndarray, path_x, path_y, dcd) -> np.ndarray:
+        result = np.empty((count, density), dtype=np.uint8)
+        for i in range(count):
+            pos = path[i]
+            result[i] = dcd(y[pos[0] * 8: pos[0] * 8 + 8, pos[1] * 8: pos[1] * 8 + 8], path_x, path_y)
+        return result.reshape(count * density)
 
     def encode(self, data: list[bytes]) -> np.ndarray:
         if isinstance(data, bytes):
@@ -230,21 +286,16 @@ class DCTEncoder(EncoderInterface):
                 np.linalg.norm(self.__RB - rb) > self.__SIGNATURE_DISTANCE_THRESHOLD):
             return result
 
-        y_plane = cv2.cvtColor(frame, cv2.COLOR_RGB2YCrCb)[:, :, 0]
-        pgn = iter(self.__positions)
+        y_plane = cv2.cvtColor(frame, cv2.COLOR_RGB2YCrCb)[:, :, 0].astype(np.float64)
+        y_plane = DCTEncoder.fast_dct_blocks_numba(y_plane, self.__dct_core, self.__dct_core_t)
 
-        def get_bytes():
-            while (pos := next(pgn, None)) is not None:
-                word = self.decode_block(y_plane[pos[0] * 8: pos[0] * 8 + 8, pos[1] * 8: pos[1] * 8 + 8])
-                yield word[0]
-                yield word[1]
-            return None
+        raw_data = DCTEncoder.pre_decode(self.__get_total_blocks(), self.__BLOCK_DENSITY, y_plane, self.__positions,
+                                         self.__PATH_X, self.__PATH_Y, DCTEncoder.decode_block)
 
         # скрывает процесс декодирования кода Рида Соломона от последующих этапов алгоритма
         def get_byte_decoded():
-            itr = get_bytes()
-            while True:
-                buf = np.fromiter(itr, dtype=np.uint8, count=255)
+            rd = raw_data.reshape((self.__get_total_bytes() // 255, 255))
+            for buf in rd:
                 try:
                     dec, _, _ = self.__RSC.decode(buf)
                 except ReedSolomonError:
@@ -254,7 +305,7 @@ class DCTEncoder(EncoderInterface):
                 for bt in dec:
                     yield bt
 
-        gen = get_byte_decoded() if self.__use_rs else get_bytes()
+        gen = get_byte_decoded() if self.__use_rs else iter(raw_data)
 
         total, offsets = Frame.parse_header(gen)
         if not total or not offsets:
@@ -265,18 +316,20 @@ class DCTEncoder(EncoderInterface):
     def image_size(self) -> tuple[int, int]:
         return self.__width * 8, self.__height * 8
 
+    def __get_total_blocks(self):
+        return self.__width * self.__height - 4
+
+    def __get_total_bytes(self):
+        return self.__get_total_blocks() * self.__BLOCK_DENSITY
+
     def max_data_size(self, count: int) -> int:
-        # всего блоков без учёта угловых сигнатурных
-        sz = self.__width * self.__height - 4
-        # каждый блок хранит __BLOCK_DENSITY байт
-        sz *= self.__BLOCK_DENSITY
+        sz = self.__get_total_bytes()
         # у заголовка обязательно есть 12 байт плюс 4 байта на каждую запись
         # каждая запись так же содержит CRC код на 4 байта
         sz -= 12 + 8 * count
         # всё сообщение целиком будет закодировано кодами Рида Соломона, что значит, что на 255 байт информации
         # будет 32 байта защиты
         return sz - (1 + sz // 255) * 32 if self.__use_rs else sz
-
 
 if __name__ == "__main__":
     c = DCTEncoder()
