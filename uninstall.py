@@ -18,9 +18,7 @@ def user_exists(username):
 
 def exec_command(command):
     print(f'[#] {command}')
-    res = os.system(command)
-    if res != 0:
-        raise RuntimeError(f'Failed to execute...')
+    os.system(command)
 
 
 def main(args: argparse.Namespace):

@@ -3,12 +3,16 @@
 В процессе установки будет создан пользователь, указанный параметром --user (по-умолчанию sonic-tuna)
 """
 import argparse
+import asyncio
 import getpass
-import os
 import pwd
 import random
 import shutil
+import subprocess
 
+__FILES_TO_INSTALL = ['tuna-ip.py', 'tuna-server.py', 'requirements.txt', 'src/util/batch_generator.py',
+                      'src/util/dct_encoder.py', 'src/util/encoder.py', 'src/browser.py', 'src/camera_bridge.js',
+                      'src/input_cameras.js', 'src/tun.py', 'src/ws_server.py']
 
 def user_exists(username):
     try:
@@ -20,12 +24,27 @@ def user_exists(username):
 
 def exec_command(command):
     print(f'[#] {command}')
-    res = os.system(command)
-    if res != 0:
-        raise RuntimeError(f'Failed to execute...')
+    result = subprocess.run(command, shell=True, capture_output=True, text=True)
+    if result.returncode != 0:
+        error_message = result.stderr if result.stderr else result.stdout
+        raise RuntimeError(f'Failed to execute: {error_message}')
 
 
-def main(args: argparse.Namespace):
+async def exec_command_async(command, *params):
+    print(f'[#] {command}', *params)
+    return await asyncio.create_subprocess_exec(command, *params,
+                                                stdout=asyncio.subprocess.PIPE,
+                                                stderr=asyncio.subprocess.PIPE)
+
+
+async def await_async_command(command):
+    stdout, stderr = await command.communicate()
+    if command.returncode != 0:
+        error_message = stdout or stderr
+        raise RuntimeError(f'Failed to execute: {error_message}')
+
+
+async def install(args: argparse.Namespace):
     if user_exists(args.user):
         print(f"User {args.user} already exists. Maybe Sonic-Tuna is already installed")
         print('Exiting...')
@@ -34,16 +53,15 @@ def main(args: argparse.Namespace):
     exec_command(f'useradd -s {nologin_shell} {args.user}')
     exec_command(f'mkdir /home/{args.user}')
     exec_command(f'chown {args.user} /home/{args.user}')
-    for file in ['tuna-ip.py', 'tuna-server.py', 'requirements.txt', 'src/util/batch_generator.py',
-                 'src/util/dct_encoder.py', 'src/util/encoder.py', 'src/browser.py', 'src/camera_bridge.js',
-                 'src/input_cameras.js', 'src/tun.py', 'src/ws_server.py']:
+    for file in __FILES_TO_INSTALL:
         exec_command(f'install -D -o {args.user} -g {args.user} {file} /home/{args.user}/{file}')
 
     exec_command(f'sudo -u {args.user} python3 -m venv /home/{args.user}/.venv')
     exec_command(f'sudo -u {args.user} /home/{args.user}/.venv/bin/pip install --upgrade pip')
     exec_command(
         f'sudo -u {args.user} /home/{args.user}/.venv/bin/pip install --upgrade -r /home/{args.user}/requirements.txt')
-    exec_command(f'sudo -u {args.user} /home/{args.user}/.venv/bin/playwright install chromium')
+    chromium = await exec_command_async('sudo', '-u', args.user,
+                                        f'/home/{args.user}/.venv/bin/playwright', 'install', 'chromium-headless-shell')
 
     exec_command(f'mkdir -p /etc/sonic-tuna')
 
@@ -88,6 +106,7 @@ Description=Sonic Tuna service - virtual personal network via WebRTC conference.
 After=network.target
 
 [Service]
+KillSignal=SIGINT
 PermissionsStartOnly=true
 Type=simple
 Group={args.user}
@@ -98,15 +117,34 @@ ExecStart=/home/{args.user}/.venv/bin/python tuna-server.py --config /etc/sonic-
 ExecStopPost=/home/{args.user}/.venv/bin/python tuna-ip.py down --config /etc/sonic-tuna/config.yaml
 Restart=always
 RestartSec=5
+TimeoutStopSec=10
 
 [Install]
 WantedBy=multi-user.target
         """)
     exec_command("systemctl daemon-reload")
 
+    print('Wait for chromium installation complete')
+    await await_async_command(chromium)
+    exec_command(f'/home/{args.user}/.venv/bin/playwright install-deps')
+
     print('Installation completed. Finish configuring Sonic Tuna in file "/etc/sonic-tuna/config.yaml"')
     print('Then you can start Tuna by command "sudo systemctl start sonic-tuna"')
 
+
+def update(args: argparse.Namespace):
+    if not user_exists(args.user):
+        print(
+            f"User {args.user} does not exists. Maybe Sonic Tuna not installed yet. Use install.py without --update flag.")
+        print('Exiting...')
+        return
+    exec_command('systemctl stop sonic-tuna')
+    for file in __FILES_TO_INSTALL:
+        exec_command(f'install -D -o {args.user} -g {args.user} {file} /home/{args.user}/{file}')
+    exec_command(f'sudo -u {args.user} /home/{args.user}/.venv/bin/pip install --upgrade pip')
+    exec_command(
+        f'sudo -u {args.user} /home/{args.user}/.venv/bin/pip install --upgrade -r /home/{args.user}/requirements.txt')
+    print('Updating completed. You can start Tuna by command "sudo systemctl start sonic-tuna"')
 
 if __name__ == "__main__":
     if getpass.getuser() != 'root':
@@ -114,8 +152,13 @@ if __name__ == "__main__":
         exit(1)
     parser = argparse.ArgumentParser(prog="install", description="Sonic Tuna installer")
 
+    parser.add_argument("--update", action='store_true', help="Update installed files")
     parser.add_argument("-u", "--user", type=str, default='sonic-tuna', help="System user will be created")
     parser.add_argument("--url", type=str, default='', help="Yandex Telemost conference link")
     parser.add_argument("--ip", type=str, default='10.0.0.1', help="Network interface ip address")
 
-    main(parser.parse_args())
+    args = parser.parse_args()
+    if args.update:
+        update(args)
+    else:
+        asyncio.run(install(args))

@@ -8,6 +8,8 @@ Sonic Tuna Project - проект виртуального тоннеля пов
 ### Базовая установка (рекомендуется)
 
 ```bash
+sudo apt update
+sudo apt install python3 python3-venv
 sudo python3 install.py
 ```
 
@@ -20,6 +22,12 @@ sudo python3 install.py
 ### Установка с параметрами
 
 ```bash
+# Обновить установленные файлы
+sudo python3 install.py --update
+
+# Обновить для пользовательского пользователя
+sudo python3 install.py --update --user myuser
+
 # Указать пользовательский IP адрес и URL конференции
 sudo python3 install.py --ip 10.0.0.1 --url "https://telemost.yandex.ru/j/12345678"
 
@@ -32,6 +40,7 @@ sudo python3 install.py -u myuser --ip 10.0.0.1 --url "https://telemost.yandex.r
 
 ### Доступные параметры install.py
 
+- `--update` — обновить установленные файлы (без пересоздания конфигурации и сервиса)
 - `-u, --user` — имя системного пользователя (по-умолчанию: `sonic-tuna`)
 - `--ip` — IP адрес сетевого интерфейса (по-умолчанию: `10.0.0.1`)
 - `--url` — ссылка на конференцию Яндекс Телемост (по-умолчанию: пусто)
@@ -72,7 +81,7 @@ sudo python3 uninstall.py
 
 Будет использован пользователь по-умолчанию `sonic-tuna`.
 
-### Удаление с пользовательским пользователем
+### Удаление с другим пользователем
 
 ```bash
 sudo python3 uninstall.py --user myuser
@@ -84,7 +93,7 @@ sudo python3 uninstall.py --user myuser
 sudo python3 uninstall.py -u myuser
 ```
 
-### Что делает удалитель
+### Что делает скрипт uninstall.py
 
 1. Останавливает systemd сервис `sonic-tuna`
 2. Удаляет системного пользователя и его домашнюю директорию
@@ -92,4 +101,6 @@ sudo python3 uninstall.py -u myuser
 4. Удаляет systemd сервис `/etc/systemd/system/sonic-tuna.service`
 5. Перезагружает конфигурацию systemd
 
-**Внимание:** Удаление необратимо и удалит всё, что было создано установщиком.
+**Внимание:** Удаление необратимо и удалит все файлы пользователя, указанного через флаг `--user`.  
+**Команда разработки не несет ответственности за ущерб, который может принести uninstall.py в случае указания не того
+пользователя**
