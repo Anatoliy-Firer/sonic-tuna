@@ -8,6 +8,8 @@ Sonic Tuna Project - проект виртуального тоннеля пов
 ### Базовая установка (рекомендуется)
 
 ```bash
+sudo apt update
+sudo apt install python3 python3-venv
 sudo python3 install.py
 ```
 
