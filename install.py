@@ -3,8 +3,8 @@
 В процессе установки будет создан пользователь, указанный параметром --user (по-умолчанию sonic-tuna)
 """
 import argparse
+import asyncio
 import getpass
-import os
 import pwd
 import random
 import shutil
@@ -30,7 +30,21 @@ def exec_command(command):
         raise RuntimeError(f'Failed to execute: {error_message}')
 
 
-def install(args: argparse.Namespace):
+async def exec_command_async(command, *params):
+    print(f'[#] {command}', *params)
+    return await asyncio.create_subprocess_exec(command, *params,
+                                                stdout=asyncio.subprocess.PIPE,
+                                                stderr=asyncio.subprocess.PIPE)
+
+
+async def await_async_command(command):
+    stdout, stderr = await command.communicate()
+    if command.returncode != 0:
+        error_message = stdout or stderr
+        raise RuntimeError(f'Failed to execute: {error_message}')
+
+
+async def install(args: argparse.Namespace):
     if user_exists(args.user):
         print(f"User {args.user} already exists. Maybe Sonic-Tuna is already installed")
         print('Exiting...')
@@ -46,7 +60,8 @@ def install(args: argparse.Namespace):
     exec_command(f'sudo -u {args.user} /home/{args.user}/.venv/bin/pip install --upgrade pip')
     exec_command(
         f'sudo -u {args.user} /home/{args.user}/.venv/bin/pip install --upgrade -r /home/{args.user}/requirements.txt')
-    exec_command(f'sudo -u {args.user} /home/{args.user}/.venv/bin/playwright install chromium')
+    chromium = await exec_command_async('sudo', '-u', args.user,
+                                        f'/home/{args.user}/.venv/bin/playwright', 'install', 'chromium-headless-shell')
 
     exec_command(f'mkdir -p /etc/sonic-tuna')
 
@@ -107,6 +122,10 @@ WantedBy=multi-user.target
         """)
     exec_command("systemctl daemon-reload")
 
+    print('Wait for chromium installation complete')
+    await await_async_command(chromium)
+    exec_command(f'/home/{args.user}/.venv/bin/playwright install-deps')
+
     print('Installation completed. Finish configuring Sonic Tuna in file "/etc/sonic-tuna/config.yaml"')
     print('Then you can start Tuna by command "sudo systemctl start sonic-tuna"')
 
@@ -120,7 +139,9 @@ def update(args: argparse.Namespace):
     exec_command('systemctl stop sonic-tuna')
     for file in __FILES_TO_INSTALL:
         exec_command(f'install -D -o {args.user} -g {args.user} {file} /home/{args.user}/{file}')
-
+    exec_command(f'sudo -u {args.user} /home/{args.user}/.venv/bin/pip install --upgrade pip')
+    exec_command(
+        f'sudo -u {args.user} /home/{args.user}/.venv/bin/pip install --upgrade -r /home/{args.user}/requirements.txt')
     print('Updating completed. You can start Tuna by command "sudo systemctl start sonic-tuna"')
 
 if __name__ == "__main__":
@@ -138,4 +159,4 @@ if __name__ == "__main__":
     if args.update:
         update(args)
     else:
-        install(args)
+        asyncio.run(install(args))

@@ -2,6 +2,6 @@ aiohttp
 NumPy
 playwright
 uvloop
-opencv-python
+opencv-python-headless
 reedsolo
 PyYAML
