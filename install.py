@@ -106,6 +106,7 @@ Description=Sonic Tuna service - virtual personal network via WebRTC conference.
 After=network.target
 
 [Service]
+KillSignal=SIGINT
 PermissionsStartOnly=true
 Type=simple
 Group={args.user}
@@ -116,6 +117,7 @@ ExecStart=/home/{args.user}/.venv/bin/python tuna-server.py --config /etc/sonic-
 ExecStopPost=/home/{args.user}/.venv/bin/python tuna-ip.py down --config /etc/sonic-tuna/config.yaml
 Restart=always
 RestartSec=5
+TimeoutStopSec=10
 
 [Install]
 WantedBy=multi-user.target
