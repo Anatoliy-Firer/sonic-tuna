@@ -25,7 +25,7 @@ def exec_command(command):
         raise RuntimeError(f'Failed to execute...')
 
 
-def main(args: argparse.Namespace):
+def install(args: argparse.Namespace):
     if user_exists(args.user):
         print(f"User {args.user} already exists. Maybe Sonic-Tuna is already installed")
         print('Exiting...')
@@ -108,14 +108,33 @@ WantedBy=multi-user.target
     print('Then you can start Tuna by command "sudo systemctl start sonic-tuna"')
 
 
+def update(args: argparse.Namespace):
+    if not user_exists(args.user):
+        print(
+            f"User {args.user} does not exists. Maybe Sonic Tuna not installed yet. Use install.py without --update flag.")
+        print('Exiting...')
+        return
+    exec_command('systemctl stop sonic-tuna')
+    for file in ['tuna-ip.py', 'tuna-server.py', 'requirements.txt', 'src/util/batch_generator.py',
+                 'src/util/dct_encoder.py', 'src/util/encoder.py', 'src/browser.py', 'src/camera_bridge.js',
+                 'src/input_cameras.js', 'src/tun.py', 'src/ws_server.py']:
+        exec_command(f'install -D -o {args.user} -g {args.user} {file} /home/{args.user}/{file}')
+
+    print('Updating completed. You can start Tuna by command "sudo systemctl start sonic-tuna"')
+
 if __name__ == "__main__":
     if getpass.getuser() != 'root':
         print("This script requires root privileges")
         exit(1)
     parser = argparse.ArgumentParser(prog="install", description="Sonic Tuna installer")
 
+    parser.add_argument("--update", action='store_true', help="Update installed files")
     parser.add_argument("-u", "--user", type=str, default='sonic-tuna', help="System user will be created")
     parser.add_argument("--url", type=str, default='', help="Yandex Telemost conference link")
     parser.add_argument("--ip", type=str, default='10.0.0.1', help="Network interface ip address")
 
-    main(parser.parse_args())
+    args = parser.parse_args()
+    if args.update:
+        update(args)
+    else:
+        install(args)
