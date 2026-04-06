@@ -4,8 +4,8 @@ from typing import Iterable
 
 import cv2
 import numpy as np
+import random
 from numba import njit
-from reedsolo import RSCodec, ReedSolomonError
 
 from src.util.encoder import EncoderInterface
 
@@ -113,32 +113,27 @@ class Frame:
 
 
 class DCTEncoder(EncoderInterface):
-    __BLOCK_DENSITY = 2
-    __LUT_MAGIC = b'DCTL'
-    __LUT_HEADER_FORMAT = '>4sf'
-
-    __redundancy = 32
-    __k = 255 - __redundancy
-    __nsym = __redundancy
-    __RSC = RSCodec(__nsym)
 
     __ENCODE_PATH = [(1, 0), (0, 1), (0, 2), (1, 1),
                      (2, 0), (3, 0), (2, 1), (1, 2),
                      (0, 3), (0, 4), (1, 3), (2, 2),
-                     (3, 1), (4, 0), (4, 1), (1, 4)]
+                     (3, 1), (4, 0), (5, 0), (0, 5),
+                     (1, 5), (1, 4), (2, 4), (2, 3),
+                     (3, 3), (3, 2), (4, 2), (4, 1)]
+
+    __BLOCK_DENSITY = len(__ENCODE_PATH) // 8
 
     __SIGNATURE_DISTANCE_THRESHOLD = 50
 
     __PATH_X = np.array([x for x, _ in __ENCODE_PATH], dtype=np.intp)
     __PATH_Y = np.array([y for _, y in __ENCODE_PATH], dtype=np.intp)
-    __LUT_SHAPE = (1 << 16, 8, 8, 3)
-    __LUT_SIZE = int(np.prod(__LUT_SHAPE))
 
     def __init__(self, width: int = 32, height: int = 32, amplitude: float = 40, use_reed_solomon: bool = True):
         self.__width = width
         self.__height = height
         self.__amplitude = np.float32(amplitude)
-        self.__positions = np.array([
+        rnd = random.Random(42)
+        poses = list([
             pos for pos in np.ndindex(self.__width, self.__height)
             if pos not in {
                 (0, 0),
@@ -147,41 +142,15 @@ class DCTEncoder(EncoderInterface):
                 (self.__width - 1, self.__height - 1),
             }
         ])
+        rnd.shuffle(poses)
+        self.__positions = np.array(poses)
         self.__use_rs = use_reed_solomon
-        self.__encode_lut = self.build_encode_lut(self.__amplitude)
         self.__dct_core = DCTEncoder.create_dtc_core()
         self.__dct_core_t = self.__dct_core.T
 
-    @staticmethod
-    def __idct2d(block):
-        return cv2.idct(block)
-
-    @staticmethod
-    def __dct2d(block):
-        return cv2.dct(block)
-
-    @classmethod
-    def build_encode_lut(cls, amplitude: float) -> np.ndarray:
-        amplitude = np.float32(amplitude)
-        lut = np.empty(cls.__LUT_SHAPE, dtype=np.uint8)
-
-        for value in range(1 << 16):
-            word = np.array([value >> 8, value & 0xFF], dtype=np.uint8)
-            bits = np.unpackbits(word)
-            y_mat = np.zeros((8, 8), dtype=np.float32)
-            y_mat[cls.__PATH_X, cls.__PATH_Y] = np.where(bits, amplitude, -amplitude)
-            y_mat = np.clip(cv2.idct(y_mat) + 128, 0, 255).astype(np.uint8)
-
-            lut[value, :, :, 0] = y_mat
-            lut[value, :, :, 1] = y_mat
-            lut[value, :, :, 2] = y_mat
-
-        return lut
-
-    def encode_block(self, word: np.ndarray) -> np.ndarray:
-        """Преобразует 2 байт в матрицу 8x8 в формате RGB"""
-        index = (int(word[0]) << 8) | int(word[1])
-        return self.__encode_lut[index]
+        if use_reed_solomon:
+            from src.util.my_reed_solo import MyReedSolo
+            self.__RSC = MyReedSolo()
 
     @staticmethod
     def create_dtc_core():
@@ -219,18 +188,37 @@ class DCTEncoder(EncoderInterface):
 
     @staticmethod
     @njit(fastmath=True)
+    def fast_idct_blocks_numba(matrix, c, ct):
+        h = matrix.shape[0]
+        w = matrix.shape[1]
+        num_blocks_h = h // 8
+        num_blocks_w = w // 8
+        res = np.empty((h, w), dtype=matrix.dtype)
+        block = np.empty((8, 8), dtype=matrix.dtype)
+        for i in range(num_blocks_h):
+            row_offset = i * 8
+            for j in range(num_blocks_w):
+                col_offset = j * 8
+                block[:, :] = matrix[row_offset:row_offset + 8, col_offset:col_offset + 8]
+                res[row_offset:row_offset + 8, col_offset:col_offset + 8] = ct @ block @ c
+        return res
+
+    @staticmethod
+    @njit(fastmath=True)
     def decode_block(y_block: np.ndarray, path_x: np.ndarray, path_y: np.ndarray) -> np.ndarray:
         """Преобразует 2 байт в матрицу 8x8 в формате RGB"""
         # получаем биты
         # y_mat = self.__dct2d(y_block.astype(np.float32) - 128.0)
-        bits = np.empty(16, dtype=np.bool)
-        for i in range(16):
+        bits = np.empty(24, dtype=np.bool)
+        for i in range(24):
             bits[i] = y_block[path_x[i], path_y[i]] > 0.0
-        result = np.empty(2, dtype=np.uint8)
+        result = np.empty(3, dtype=np.uint8)
         result[0] = (bits[0] << 7) | (bits[1] << 6) | (bits[2] << 5) | (bits[3] << 4) | (bits[4] << 3) | (
                 bits[5] << 2) | (bits[6] << 1) | (bits[7])
         result[1] = (bits[8] << 7) | (bits[9] << 6) | (bits[10] << 5) | (bits[11] << 4) | (bits[12] << 3) | (
                 bits[13] << 2) | (bits[14] << 1) | (bits[15])
+        result[2] = (bits[16] << 7) | (bits[17] << 6) | (bits[18] << 5) | (bits[19] << 4) | (bits[20] << 3) | (
+                bits[21] << 2) | (bits[22] << 1) | (bits[23])
         return result
 
     @staticmethod
@@ -251,27 +239,42 @@ class DCTEncoder(EncoderInterface):
             raise ValueError(
                 f"Слишком много данных. Максимум для текущих настроек: {self.max_data_size(len(data))} байт, передано {total_len} байт")
 
-        result = np.zeros((self.__width * 8, self.__height * 8, 3), dtype=np.uint8)
-        # сигнатура кадра - 4 квадрата по углам, белый, красный, зеленый и синий
-        result[:8, :8, :] = 255
-        result[-8:, :8, 0] = 255
-        result[:8, -8:, 1] = 255
-        result[-8:, -8:, 2] = 255
-
         ser = Frame.serialize(data)
         pack = np.frombuffer(self.__RSC.encode(ser) if self.__use_rs else ser, dtype=np.uint8)
-        if len(pack) % 2 == 1:
+        if len(pack) % 3 == 1:
+            pack = np.pad(pack, (0, 2))
+        elif len(pack) % 3 == 2:
             pack = np.pad(pack, (0, 1))
-        pack = pack.reshape((len(pack) // 2, 2))
-        for pos, pair in zip(self.__positions, pack):
-            result[pos[0] * 8: pos[0] * 8 + 8, pos[1] * 8: pos[1] * 8 + 8] = self.encode_block(pair)
+        pack = pack.reshape((len(pack) // 3, 3))
+        coeffs = np.zeros((self.__width * 8, self.__height * 8), dtype=np.float64)
+        bits = np.unpackbits(pack, axis=1)
+        values = np.where(bits > 0, self.__amplitude, -self.__amplitude).astype(np.float64)
+        for i, pos in enumerate(self.__positions[:len(pack)]):
+            row = pos[0] * 8
+            col = pos[1] * 8
+            block = coeffs[row:row + 8, col:col + 8]
+            block[self.__PATH_X, self.__PATH_Y] = values[i]
+
+        y_plane = DCTEncoder.fast_idct_blocks_numba(coeffs, self.__dct_core, self.__dct_core_t)
+        y_plane = np.clip(y_plane + 128.0, 0, 255).astype(np.uint8)
+
+        result = np.empty((self.__width * 8, self.__height * 8, 3), dtype=np.uint8)
+        result[:, :, 0] = y_plane
+        result[:, :, 1] = y_plane
+        result[:, :, 2] = y_plane
+
+        # сигнатура кадра - 4 квадрата по углам, белый, красный, зеленый и синий
+        result[:8, :8, :] = 255
+        result[-8:, :8, :] = 0
+        result[:8, -8:, :] = 0
+        result[-8:, -8:, :] = 255
 
         return result
 
     __LT = np.array([255, 255, 255], dtype=np.uint8)
-    __RT = np.array([255, 0, 0], dtype=np.uint8)
-    __LB = np.array([0, 255, 0], dtype=np.uint8)
-    __RB = np.array([0, 0, 255], dtype=np.uint8)
+    __RT = np.array([0, 0, 0], dtype=np.uint8)
+    __LB = np.array([0, 0, 0], dtype=np.uint8)
+    __RB = np.array([255, 255, 255], dtype=np.uint8)
 
     def decode(self, frame: np.ndarray) -> list[bytes]:
         result = []
@@ -296,12 +299,7 @@ class DCTEncoder(EncoderInterface):
         def get_byte_decoded():
             rd = raw_data.reshape((self.__get_total_bytes() // 255, 255))
             for buf in rd:
-                try:
-                    dec, _, _ = self.__RSC.decode(buf)
-                except ReedSolomonError:
-                    # если восстановление кодом Рида Соломона не удалось - отдаем данные как есть
-                    # надеемся, что код CRC32 отбросит повреждения
-                    dec = buf[:self.__k]
+                dec = self.__RSC.decode(buf)
                 for bt in dec:
                     yield bt
 
@@ -331,13 +329,21 @@ class DCTEncoder(EncoderInterface):
         # будет 32 байта защиты
         return sz - (1 + sz // 255) * 32 if self.__use_rs else sz
 
+    def warmup(self):
+        datas = np.empty((1000, 1000), dtype=np.uint8)
+        encoded = []
+        for data in datas:
+            encoded.append(self.encode(data.tobytes))
+        for enc in encoded:
+            self.decode(enc)
+
 if __name__ == "__main__":
     c = DCTEncoder()
     print(c.max_data_size(1))
     data = np.random.randint(0, 255, 1000, dtype=np.uint8)
     encoded = c.encode(data.tobytes())
 
-    cv2.imwrite('result.jpeg', encoded, [int(cv2.IMWRITE_JPEG_QUALITY), 100])
+    cv2.imwrite('result.jpeg', encoded, [int(cv2.IMWRITE_JPEG_QUALITY), 50])
     img = cv2.imread('result.jpeg')
     decoded = c.decode(img)
     print(np.array_equal(data, np.frombuffer(decoded[0], dtype=np.uint8)))

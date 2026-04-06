@@ -56,8 +56,11 @@ async def main(args: argparse.Namespace):
 
     browser_task = asyncio.create_task(browser.start_browser(not args.show_gui))
 
-    codec = DCTEncoder(width // 8, height // 8, 40,
-                       use_reed_solomon=not args.disable_reed_solomon)
+    logging.info(f'Reed Solomon active: {not args.disable_reed_solomon}')
+    codec = DCTEncoder(width // 8, height // 8, 40, use_reed_solomon=not args.disable_reed_solomon)
+    logging.info('warm-up encoder')
+    codec.warmup()
+    logging.info('encoder warmed-up')
 
     tun_to_ws_task = asyncio.create_task(tun_to_ws(tunnel, websocket, args.fps, codec))
     ws_to_tun_task = asyncio.create_task(ws_to_tun(tunnel, websocket, codec))
