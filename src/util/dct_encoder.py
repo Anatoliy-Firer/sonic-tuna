@@ -297,7 +297,8 @@ class DCTEncoder(EncoderInterface):
 
         # скрывает процесс декодирования кода Рида Соломона от последующих этапов алгоритма
         def get_byte_decoded():
-            rd = raw_data.reshape((self.__get_total_bytes() // 255, 255))
+            ttl = self.__get_total_bytes() // 255
+            rd = raw_data[:ttl * 255].reshape((ttl, 255))
             for buf in rd:
                 dec = self.__RSC.decode(buf)
                 for bt in dec:
