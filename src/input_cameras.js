@@ -3,9 +3,9 @@
     const SCAN_INTERVAL_MS = 1000;
     const SIGNATURE_DISTANCE_THRESHOLD = 50;
     const SIGNATURE_LT = [255, 255, 255];
-    const SIGNATURE_RT = [255, 0, 0];
-    const SIGNATURE_LB = [0, 255, 0];
-    const SIGNATURE_RB = [0, 0, 255];
+    const SIGNATURE_RT = [0, 0, 0];
+    const SIGNATURE_LB = [0, 0, 0];
+    const SIGNATURE_RB = [255, 255, 255];
 
     function fillRgbFromRgba(rgbaBytes, rgbBytes) {
         if (WIDTH <= 0 || HEIGHT <= 0) {
