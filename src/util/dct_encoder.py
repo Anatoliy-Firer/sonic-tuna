@@ -333,7 +333,7 @@ class DCTEncoder(EncoderInterface):
         datas = np.empty((1000, 1000), dtype=np.uint8)
         encoded = []
         for data in datas:
-            encoded.append(self.encode(data.tobytes))
+            encoded.append(self.encode(data.tobytes()))
         for enc in encoded:
             self.decode(enc)
 
