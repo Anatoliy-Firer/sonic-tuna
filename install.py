@@ -12,7 +12,7 @@ import subprocess
 
 __FILES_TO_INSTALL = ['tuna-ip.py', 'tuna-server.py', 'requirements.txt', 'src/util/batch_generator.py',
                       'src/util/dct_encoder.py', 'src/util/encoder.py', 'src/browser.py', 'src/camera_bridge.js',
-                      'src/input_cameras.js', 'src/tun.py', 'src/ws_server.py']
+                      'src/input_cameras.js', 'src/tun.py', 'src/ws_server.py', 'src/util/my_reed_solo.py']
 
 def user_exists(username):
     try:
