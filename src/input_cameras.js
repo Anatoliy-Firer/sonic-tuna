@@ -11,7 +11,7 @@
         if (WIDTH <= 0 || HEIGHT <= 0) {
             return false;
         }
-                const pixelAt = (x, y) => {
+        const pixelAt = (x, y) => {
             const src = (y * WIDTH + x) * 4;
             return [rgbaBytes[src], rgbaBytes[src + 1], rgbaBytes[src + 2]];
         };
@@ -33,7 +33,7 @@
             && distance(lb, SIGNATURE_LB) <= SIGNATURE_DISTANCE_THRESHOLD
             && distance(rb, SIGNATURE_RB) <= SIGNATURE_DISTANCE_THRESHOLD;
 
-        if(!isValid) return false;
+        if (!isValid) return false;
 
         for (let y = 0; y < HEIGHT; y += 1) {
             const rgbaRowOffset = y * WIDTH * 4;
@@ -50,7 +50,7 @@
             }
         }
 
-        return True;
+        return true;
     }
 
     function getRemoteVideoEntries() {

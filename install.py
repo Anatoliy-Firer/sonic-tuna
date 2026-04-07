@@ -90,10 +90,9 @@ call_url: {args.url}# Yandex Telemost join url (https://telemost.yandex.ru/j/<co
 port: 8042 # websocket port, used for internal process communication
 username: user{random.randint(1, 100)} # nickname for Yandex Telemost conference
         
-# frame_scale: 1 # Scale factor. Image will be upscaled before sending via Yandex Telemost.
-# frame_size: 256x256 # Virtual web camera resolution. Must be divided by 16.
+# frame_scale: 8 # Scale factor. Image will be upscaled before sending via Yandex Telemost.
+# frame_size: 64x64 # Virtual web camera resolution. Must be divided by 16.
 # fps: 20 # Virtual web camera fps.
-# disable_reed_solomon: true # Disable usign Reed Solomon error correction codes. Uncomment if your PC is potato :D
 """)
     exec_command(f'chown {args.user}:{args.user} /etc/sonic-tuna')
     exec_command(f'chown {args.user}:{args.user} /etc/sonic-tuna/config.yaml')
