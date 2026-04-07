@@ -93,6 +93,7 @@ username: user{random.randint(1, 100)} # nickname for Yandex Telemost conference
 # frame_scale: 8 # Scale factor. Image will be upscaled before sending via Yandex Telemost.
 # frame_size: 64x64 # Virtual web camera resolution. Must be divided by 16.
 # fps: 20 # Virtual web camera fps.
+# frame_bit_per_pix: 3 # How many bits coding by block 
 """)
     exec_command(f'chown {args.user}:{args.user} /etc/sonic-tuna')
     exec_command(f'chown {args.user}:{args.user} /etc/sonic-tuna/config.yaml')

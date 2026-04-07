@@ -128,7 +128,7 @@ if __name__ == '__main__':
     parser.add_argument("--call-url", type=str, default=None,
                         help="Yandex Telemost conference url")
     parser.add_argument("--frame-scale", type=int, default=8, help="Frame scale")
-    parser.add_argument("--frame-bit-per-pix", "--frame-bpx", type=int, default=4, help="Count of bits per pixel")
+    parser.add_argument("--frame-bit-per-pix", "--frame-bpx", type=int, default=3, help="Count of bits per pixel")
     parser.add_argument(
         "--frame-size",
         type=parse_resolution,
