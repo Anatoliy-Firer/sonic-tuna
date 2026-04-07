@@ -41,14 +41,14 @@ function drawEmptyFrame() {
 }
 
 function drawFrame(rgbBytes) {
-    if (!(rgbBytes instanceof Uint8Array) || rgbBytes.length !== INPUT_W * INPUT_H * 3) {
+    if (!(rgbBytes instanceof Uint8Array) || rgbBytes.length !== INPUT_W * INPUT_H) {
         return;
     }
 
-    for (let src = 0, dst = 0; src < rgbBytes.length; src += 3, dst += 4) {
+    for (let src = 0, dst = 0; src < rgbBytes.length; src += 1, dst += 4) {
         rgbaBytes[dst] = rgbBytes[src];
-        rgbaBytes[dst + 1] = rgbBytes[src + 1];
-        rgbaBytes[dst + 2] = rgbBytes[src + 2];
+        rgbaBytes[dst + 1] = rgbBytes[src];
+        rgbaBytes[dst + 2] = rgbBytes[src];
         rgbaBytes[dst + 3] = 255;
     }
 

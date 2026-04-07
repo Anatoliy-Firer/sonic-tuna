@@ -1,7 +1,7 @@
 ([WIDTH, HEIGHT]) => {
 
     const SCAN_INTERVAL_MS = 1000;
-    const SIGNATURE_DISTANCE_THRESHOLD = 50;
+    const SIGNATURE_DISTANCE_THRESHOLD = 15;
     const SIGNATURE_LT = [255, 255, 255];
     const SIGNATURE_RT = [0, 0, 0];
     const SIGNATURE_LB = [0, 0, 0];
@@ -11,25 +11,7 @@
         if (WIDTH <= 0 || HEIGHT <= 0) {
             return false;
         }
-
-        for (let y = 0; y < HEIGHT; y += 1) {
-            const rgbaRowOffset = y * WIDTH * 4;
-            const rgbRowOffset = y * WIDTH * 3;
-
-            for (let x = 0; x < WIDTH; x += 1) {
-                const src = rgbaRowOffset + x * 4;
-                const dst = rgbRowOffset + x * 3;
-                const red = rgbaBytes[src];
-                const green = rgbaBytes[src + 1];
-                const blue = rgbaBytes[src + 2];
-
-                rgbBytes[dst] = red;
-                rgbBytes[dst + 1] = green;
-                rgbBytes[dst + 2] = blue;
-            }
-        }
-
-        const pixelAt = (x, y) => {
+                const pixelAt = (x, y) => {
             const src = (y * WIDTH + x) * 4;
             return [rgbaBytes[src], rgbaBytes[src + 1], rgbaBytes[src + 2]];
         };
@@ -46,10 +28,29 @@
         const lb = pixelAt(WIDTH - 1, 0);
         const rb = pixelAt(WIDTH - 1, HEIGHT - 1);
 
-        return distance(lt, SIGNATURE_LT) <= SIGNATURE_DISTANCE_THRESHOLD
+        const isValid = distance(lt, SIGNATURE_LT) <= SIGNATURE_DISTANCE_THRESHOLD
             && distance(rt, SIGNATURE_RT) <= SIGNATURE_DISTANCE_THRESHOLD
             && distance(lb, SIGNATURE_LB) <= SIGNATURE_DISTANCE_THRESHOLD
             && distance(rb, SIGNATURE_RB) <= SIGNATURE_DISTANCE_THRESHOLD;
+
+        if(!isValid) return false;
+
+        for (let y = 0; y < HEIGHT; y += 1) {
+            const rgbaRowOffset = y * WIDTH * 4;
+            const rgbRowOffset = y * WIDTH;
+
+            for (let x = 0; x < WIDTH; x += 1) {
+                const src = rgbaRowOffset + x * 4;
+                const dst = rgbRowOffset + x;
+                const red = rgbaBytes[src];
+                const green = rgbaBytes[src + 1];
+                const blue = rgbaBytes[src + 2];
+
+                rgbBytes[dst] = (red + green + blue) / 3;
+            }
+        }
+
+        return True;
     }
 
     function getRemoteVideoEntries() {
@@ -98,7 +99,7 @@
         const canvas = new OffscreenCanvas(WIDTH, HEIGHT);
         const ctx = canvas.getContext("2d", {willReadFrequently: true});
         ctx.imageSmoothingEnabled = false;
-        const rgbBytes = new Uint8Array(WIDTH * HEIGHT * 3);
+        const rgbBytes = new Uint8Array(WIDTH * HEIGHT);
 
         const stopReader = async () => {
             try {

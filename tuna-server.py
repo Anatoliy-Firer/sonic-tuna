@@ -11,7 +11,7 @@ import yaml
 from src.browser import Browser
 from src.tun import Tunnel
 from src.util.batch_generator import chunk_from_queue
-from src.util.dct_encoder import DCTEncoder, EncoderInterface
+from src.util.grayscale_encoder import GrayscaleEncoder, EncoderInterface
 from src.ws_server import WebSocketServer
 
 _PACKET_SIZE = struct.Struct("I")
@@ -56,11 +56,7 @@ async def main(args: argparse.Namespace):
 
     browser_task = asyncio.create_task(browser.start_browser(not args.show_gui))
 
-    logging.info(f'Reed Solomon active: {not args.disable_reed_solomon}')
-    codec = DCTEncoder(width // 8, height // 8, 40, use_reed_solomon=not args.disable_reed_solomon)
-    logging.info('warm-up encoder')
-    codec.warmup()
-    logging.info('encoder warmed-up')
+    codec = GrayscaleEncoder(width, height)
 
     tun_to_ws_task = asyncio.create_task(tun_to_ws(tunnel, websocket, args.fps, codec))
     ws_to_tun_task = asyncio.create_task(ws_to_tun(tunnel, websocket, codec))
@@ -128,21 +124,20 @@ if __name__ == '__main__':
     parser.add_argument("-d", "--device", default="tuna", help="Virtual interface name")
     parser.add_argument("--call-url", type=str, default=None,
                         help="Yandex Telemost conference url")
-    parser.add_argument("--frame-scale", type=int, default=1, help="Frame scale")
+    parser.add_argument("--frame-scale", type=int, default=8, help="Frame scale")
+    parser.add_argument("--frame-bit-per-pix", "--frame-bpx", type=int, default=4, help="Count of bits per pixel")
     parser.add_argument(
         "--frame-size",
         type=parse_resolution,
-        default=(256, 256),
+        default=(64, 64),
         help=f"Video resolution in WIDTHxHEIGHT format. Default: 256x256",
     )
     parser.add_argument("--fps", type=int, default=20, help="Frame rate")
     parser.add_argument("-p", "--port", type=int, default=8042, help="Internal websocket port")
-    parser.add_argument("--mtu", type=int, default=1400, help="MTU")
+    parser.add_argument("--mtu", type=int, default=1500, help="MTU")
     parser.add_argument("--show-gui", action='store_true', help="Show chromium GUI")
     parser.add_argument("--username", type=str, default=None,
                         help="Username at Yandex Telemost conference. Default is current system user")
-    parser.add_argument("--disable-reed-solomon", action='store_true',
-                        help="Disable Reed Solomon error correction (for weak computers)")
 
     parser.add_argument("-l", "--log-level", type=parse_log_lever, default=logging.INFO,
                         choices=logging.getLevelNamesMapping().values(), help="Log level")
@@ -176,8 +171,6 @@ if __name__ == '__main__':
             reconstructed_argv.extend(['--mtu', str(config['mtu'])])
         if 'username' in config:
             reconstructed_argv.extend(['--username', config['username']])
-        if config.get('disable_reed_solomon'):
-            reconstructed_argv.append('--disable-reed-solomon')
         if 'log_level' in config:
             reconstructed_argv.extend(['-l', config['log_level']])
         
