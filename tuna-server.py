@@ -46,6 +46,9 @@ async def main(args: argparse.Namespace):
         level=args.log_level,
         format='[%(asctime)s] [%(levelname)s] %(message)s'
     )
+
+    logging.info(f"Config: {args}")
+
     width, height = args.frame_size
 
     browser = Browser(args.port, width, height, args.frame_scale, args.fps, args.call_url, args.username)
@@ -163,6 +166,8 @@ if __name__ == '__main__':
             reconstructed_argv.extend(['--frame-scale', str(config['frame_scale'])])
         if 'frame_size' in config:
             reconstructed_argv.extend(['--frame-size', config['frame_size']])
+        if 'frame_bit_per_pix' in config:
+            reconstructed_argv.extend(['--frame-bit-per-pix', config['frame_bit_per_pix']])
         if 'fps' in config:
             reconstructed_argv.extend(['--fps', str(config['fps'])])
         if 'port' in config:

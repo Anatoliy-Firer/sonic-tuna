@@ -13,7 +13,7 @@ class Browser(AbstractContextManager):
         pass
 
     def __init__(self, port: int, frame_w, frame_h, scale, fps: int, call_url: str, user: str = None,
-                 logging: bool = False):
+                 enable_log: bool = False):
         self.__port = port
         self.__frame_w = frame_w
         self.__frame_h = frame_h
@@ -21,7 +21,7 @@ class Browser(AbstractContextManager):
         self.__fps = fps
         self.__call_url = call_url
         self.__user = user or getpass.getuser()
-        self.__logging = logging
+        self.__logging = enable_log
 
     async def start_browser(self, headless: bool = True):
         process = await asyncio.create_subprocess_exec(
