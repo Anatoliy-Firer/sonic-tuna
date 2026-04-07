@@ -167,7 +167,7 @@ if __name__ == '__main__':
         if 'frame_size' in config:
             reconstructed_argv.extend(['--frame-size', config['frame_size']])
         if 'frame_bit_per_pix' in config:
-            reconstructed_argv.extend(['--frame-bit-per-pix', config['frame_bit_per_pix']])
+            reconstructed_argv.extend(['--frame-bit-per-pix', str(config['frame_bit_per_pix'])])
         if 'fps' in config:
             reconstructed_argv.extend(['--fps', str(config['fps'])])
         if 'port' in config:
