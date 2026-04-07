@@ -1,10 +1,89 @@
 # кодировщик похож на Bitmap, но использует только оттенки серого, что позволяет добиться сразу двух вещей:
 # избежать многих искажений от сжатия и уменьшить передаваемые между python и js данные в разы.
-from itertools import product
 
 import numpy as np
+from numba import njit
 
 from src.util.encoder import EncoderInterface, Frame
+
+
+@njit(fastmath=True)
+def _fast_unpack_bits1(byte) -> np.ndarray:
+    result = np.empty(8, dtype=np.bool)
+    result[0] = byte & 0x80 != 0
+    result[1] = byte & 0x40 != 0
+    result[2] = byte & 0x20 != 0
+    result[3] = byte & 0x10 != 0
+    result[4] = byte & 0x08 != 0
+    result[5] = byte & 0x04 != 0
+    result[6] = byte & 0x02 != 0
+    result[7] = byte & 0x01 != 0
+    return result
+
+
+@njit(fastmath=True)
+def _fast_unpack_bits(arr: np.ndarray, div: int) -> np.ndarray:
+    ns = arr.size * 8
+    rest = (div - ns % div) % div
+    result = np.empty(arr.size * 8 + rest, dtype=np.bool)
+    for i in range(arr.size):
+        result[i * 8: (i + 1) * 8] = _fast_unpack_bits1(arr[i])
+    return result
+
+
+@njit(fastmath=True)
+def _fast_pack_bits(arr: np.ndarray) -> np.ndarray:
+    bts = arr.shape[1]
+    result = np.empty(arr.shape[0], dtype=np.uint8)
+
+    for i in range(arr.shape[0]):
+        bt = 0
+        for j in range(bts):
+            bt <<= 1
+            bt |= (arr[i, j] != 0)
+        result[i] = bt
+
+    return result
+
+
+@njit(fastmath=True)
+def _encode(raw: np.ndarray, res: np.ndarray, bpx: int, width: int, height: int, code_table: np.ndarray):
+    bits = _fast_unpack_bits(raw, bpx)
+
+    syms = bits.reshape((bits.size // bpx, bpx))
+    syms = _fast_pack_bits(syms)
+    i = 0
+    wmo = width - 1
+    hmo = height - 1
+    for y in range(height):
+        for x in range(width):
+            if ((x == 0 and y == 0) or
+                    (x == wmo and y == 0) or
+                    (x == 0 and y == hmo) or
+                    (x == wmo and y == hmo)):
+                continue
+            res[y, x] = code_table[syms[i]]
+            i += 1
+
+
+@njit(fastmath=True)
+def _pre_decode(frame, width, height, bpx, max_bytes) -> np.ndarray:
+    frame = frame.astype(np.float32) / (255. / ((1 << bpx) - 1))
+    bits = np.empty((max_bytes + 1) * 8, dtype=np.uint8)
+    i = 0
+    wmo = width - 1
+    hmo = height - 1
+    for y in range(height):
+        for x in range(width):
+            if ((x == 0 and y == 0) or
+                    (x == wmo and y == 0) or
+                    (x == 0 and y == hmo) or
+                    (x == wmo and y == hmo)):
+                continue
+            bits[i:i + bpx] = _fast_unpack_bits1(np.uint8(round(frame[y, x])))[-bpx:]
+            i += bpx
+    raw_data = _fast_pack_bits(bits.reshape((-1, 8)))
+    return raw_data
 
 
 class GrayscaleEncoder(EncoderInterface):
@@ -50,33 +129,14 @@ class GrayscaleEncoder(EncoderInterface):
         res[-1, -1] = 255
         raw = Frame.serialize(data)
 
-        bits = np.unpackbits(raw)
-        rest = self.__bpx - len(bits) % self.__bpx
-        if rest > 0:
-            bits = np.pad(bits, (0, rest))
-
-        syms = bits.reshape((bits.size // self.__bpx, self.__bpx))
-        syms = np.packbits(syms, axis=1) >> (8 - self.__bpx)
-        syms = syms.flatten()
-
-        for (y, x), sym in zip(filter(self.__use_pos, product(range(self.__width), range(self.__height))), syms):
-            res[y, x] = self.__code_table[sym]
-
+        _encode(raw, res, self.__bpx, self.__width, self.__height, self.__code_table)
         return res
 
     def decode(self, frame: np.ndarray) -> list[bytes]:
         if frame[0, 0] < 240 or frame[-1, -1] < 240 or frame[-1, 0] > 15 or frame[0, -1] > 15:
             return []
 
-        frame = (frame.astype(np.float32) / (255. / ((1 << self.__bpx) - 1))).round().astype(np.uint8)
-        # plain = np.concatenate([frame[0, 1:-1], frame[1:-1, :].reshape(self.__width * (self.__height-2)), frame[-1, 1:-1]])
-        bits = np.empty((self.__max_bytes() + 1) * 8, dtype=np.bool)
-        for (y, x), i in zip(filter(self.__use_pos, product(range(self.__width), range(self.__height))),
-                             range(0, bits.size, self.__bpx)):
-            # print(bin(frame[y,x]))
-            bits[i:i + self.__bpx] = np.unpackbits(frame[y, x])[-self.__bpx:]
-        raw_data = np.packbits(bits)
-
+        raw_data = _pre_decode(frame, self.__width, self.__height, self.__bpx, self.__max_bytes())
         gen = iter(raw_data)
 
         total, offsets = Frame.parse_header(gen)
@@ -90,7 +150,6 @@ class GrayscaleEncoder(EncoderInterface):
 
     def max_data_size(self, count: int) -> int:
         return self.__max_bytes()
-
 
 if __name__ == "__main__":
     coder = GrayscaleEncoder(64, 64, 4)
