@@ -60,6 +60,7 @@ async def main(args: argparse.Namespace):
     browser_task = asyncio.create_task(browser.start_browser(not args.show_gui))
 
     codec = GrayscaleEncoder(width, height)
+    codec.warmup() # прогреваем функции (чтобы jit компиляция выполнилась заранее)
 
     tun_to_ws_task = asyncio.create_task(tun_to_ws(tunnel, websocket, args.fps, codec))
     ws_to_tun_task = asyncio.create_task(ws_to_tun(tunnel, websocket, codec))

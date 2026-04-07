@@ -151,6 +151,14 @@ class GrayscaleEncoder(EncoderInterface):
     def max_data_size(self, count: int) -> int:
         return self.__max_bytes()
 
+    def warmup(self):
+        rdata = np.random.randint(0, 255, (100, 1000), dtype=np.uint8)
+        encoded = []
+        for d in rdata:
+            encoded.append(self.encode(d.tobytes()))
+        for e in encoded:
+            self.decode(e)
+
 if __name__ == "__main__":
     coder = GrayscaleEncoder(64, 64, 4)
     print(coder.max_data_size(1))
