@@ -78,7 +78,7 @@ function flushOutgoingFrames() {
 }
 
 function sendFrame(frameBytes) {
-    if (!(frameBytes instanceof Uint8Array) || frameBytes.length !== INPUT_W * INPUT_H * 3) {
+    if (!(frameBytes instanceof Uint8Array) || frameBytes.length !== INPUT_W * INPUT_H) {
         return false;
     }
 

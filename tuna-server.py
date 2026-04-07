@@ -30,7 +30,7 @@ async def tun_to_ws(tunnel: Tunnel, ws: WebSocketServer, fps: int, codec: Encode
 async def ws_to_tun(tunnel: Tunnel, ws: WebSocketServer, codec: EncoderInterface):
     w, h = codec.image_size()
     async for frame in ws.frames():
-        decoded = codec.decode(np.frombuffer(frame, dtype=np.uint8).reshape((w, h, 3)))
+        decoded = codec.decode(np.frombuffer(frame, dtype=np.uint8).reshape((w, h)))
         for pack in decoded:
             try:
                 tunnel.push_package(pack)
