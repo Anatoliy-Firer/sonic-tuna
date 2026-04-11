@@ -64,6 +64,8 @@ def _encode(raw: np.ndarray, res: np.ndarray, bpx: int, width: int, height: int,
                 continue
             res[y, x] = code_table[syms[i]]
             i += 1
+            if i > len(syms):
+                return
 
 
 @njit(fastmath=True)
@@ -82,6 +84,8 @@ def _pre_decode(frame, width, height, bpx, max_bytes) -> np.ndarray:
                 continue
             bits[i:i + bpx] = _fast_unpack_bits1(np.uint8(round(frame[y, x])))[-bpx:]
             i += bpx
+            if i >= len(bits):
+                break
     raw_data = _fast_pack_bits(bits.reshape((-1, 8)))
     return raw_data
 
