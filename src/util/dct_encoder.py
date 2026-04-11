@@ -4,7 +4,7 @@ import zlib
 from typing import Iterable
 
 import numpy as np
-from numba import njit
+from numba import njit, prange
 
 from src.util.encoder import EncoderInterface
 
@@ -50,7 +50,7 @@ def _fast_pack_bits(arr: np.ndarray) -> np.ndarray:
 
     return result
 
-@njit(fastmath=True)
+@njit(fastmath=True, parallel=True)
 def _fast_idct_blocks_numba(matrix, c, ct):
     h = matrix.shape[0]
     w = matrix.shape[1]
@@ -58,7 +58,7 @@ def _fast_idct_blocks_numba(matrix, c, ct):
     num_blocks_w = w // 8
     res = np.empty((h, w), dtype=matrix.dtype)
     block = np.empty((8, 8), dtype=matrix.dtype)
-    for i in range(num_blocks_h):
+    for i in prange(num_blocks_h):
         row_offset = i * 8
         for j in range(num_blocks_w):
             col_offset = j * 8
@@ -117,14 +117,14 @@ def _decode_block(y_block: np.ndarray, encode_path: np.ndarray) -> np.ndarray:
             bits[21] << 2) | (bits[22] << 1) | (bits[23])
     return result
 
-@njit(fastmath=True)
+@njit(fastmath=True, parallel=True)
 def _fast_dct_blocks_numba(matrix, c, ct):
     matrix = _get_luminance(matrix)
     n = matrix.shape[0]
     num_blocks = n // 8
     res = np.empty((n, n), dtype=matrix.dtype)
     block = np.empty((8, 8), dtype=matrix.dtype)
-    for i in range(num_blocks):
+    for i in prange(num_blocks):
         row_offset = i * 8
         for j in range(num_blocks):
             col_offset = j * 8
