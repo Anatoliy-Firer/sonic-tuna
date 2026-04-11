@@ -1,13 +1,100 @@
+import random
 import struct
 import zlib
 from typing import Iterable
 
 import cv2
 import numpy as np
-import random
 from numba import njit
 
 from src.util.encoder import EncoderInterface
+
+
+@njit(fastmath=True)
+def _fast_unpack_bits1(byte, result: np.ndarray):
+    result[0] = byte & 0x80 != 0
+    result[1] = byte & 0x40 != 0
+    result[2] = byte & 0x20 != 0
+    result[3] = byte & 0x10 != 0
+    result[4] = byte & 0x08 != 0
+    result[5] = byte & 0x04 != 0
+    result[6] = byte & 0x02 != 0
+    result[7] = byte & 0x01 != 0
+
+
+@njit(fastmath=True)
+def _fast_unpack_bits1d(arr: np.ndarray, result: np.ndarray) -> np.ndarray:
+    for i in range(arr.size):
+        _fast_unpack_bits1(arr[i], result[i * 8: (i + 1) * 8])
+    return result
+
+
+@njit(fastmath=True)
+def _fast_unpack_bits(arr: np.ndarray) -> np.ndarray:
+    result = np.empty((arr.shape[0], arr.shape[1] * 8), dtype=np.bool)
+    for i in range(arr.shape[0]):
+        _fast_unpack_bits1d(arr[i], result[i])
+    return result
+
+
+@njit(fastmath=True)
+def _fast_pack_bits(arr: np.ndarray) -> np.ndarray:
+    bts = arr.shape[1]
+    result = np.empty(arr.shape[0], dtype=np.uint8)
+
+    for i in range(arr.shape[0]):
+        bt = 0
+        for j in range(bts):
+            bt <<= 1
+            bt |= (arr[i, j] != 0)
+        result[i] = bt
+
+    return result
+
+@njit(fastmath=True)
+def _fast_idct_blocks_numba(matrix, c, ct):
+    h = matrix.shape[0]
+    w = matrix.shape[1]
+    num_blocks_h = h // 8
+    num_blocks_w = w // 8
+    res = np.empty((h, w), dtype=matrix.dtype)
+    block = np.empty((8, 8), dtype=matrix.dtype)
+    for i in range(num_blocks_h):
+        row_offset = i * 8
+        for j in range(num_blocks_w):
+            col_offset = j * 8
+            block[:, :] = matrix[row_offset:row_offset + 8, col_offset:col_offset + 8]
+            res[row_offset:row_offset + 8, col_offset:col_offset + 8] = ct @ block @ c
+    return res
+
+
+
+@njit(fastmath=True)
+def _encode(pack: np.ndarray, width, height, amplitude, positions, encode_path, dct_core, dct_core_t):
+    pack = pack.reshape((len(pack) // 3, 3))
+    coeffs = np.zeros((width * 8, height * 8), dtype=np.float64)
+    bits = _fast_unpack_bits(pack)
+    values = np.where(bits > 0, amplitude, -amplitude).astype(np.float64)
+    for i, pos in enumerate(positions[:len(pack)]):
+        row = pos[0] * 8
+        col = pos[1] * 8
+        for j, (x, y) in enumerate(encode_path):
+            coeffs[row + x, col + y] = values[i][j]
+
+    y_plane = _fast_idct_blocks_numba(coeffs, dct_core, dct_core_t)
+    y_plane = np.clip(y_plane + 128.0, 0, 255).astype(np.uint8)
+
+    result = np.empty((width * 8, height * 8, 3), dtype=np.uint8)
+    result[:, :, 0] = y_plane
+    result[:, :, 1] = y_plane
+    result[:, :, 2] = y_plane
+
+    # сигнатура кадра - 4 квадрата по углам
+    result[:8, :8, :] = 255
+    result[-8:, :8, :] = 0
+    result[:8, -8:, :] = 0
+    result[-8:, -8:, :] = 255
+    return result
 
 
 class Frame:
@@ -114,19 +201,16 @@ class Frame:
 
 class DCTEncoder(EncoderInterface):
 
-    __ENCODE_PATH = [(1, 0), (0, 1), (0, 2), (1, 1),
+    __ENCODE_PATH = np.array([(1, 0), (0, 1), (0, 2), (1, 1),
                      (2, 0), (3, 0), (2, 1), (1, 2),
                      (0, 3), (0, 4), (1, 3), (2, 2),
                      (3, 1), (4, 0), (5, 0), (0, 5),
                      (1, 5), (1, 4), (2, 4), (2, 3),
-                     (3, 3), (3, 2), (4, 2), (4, 1)]
+                     (3, 3), (3, 2), (4, 2), (4, 1)], dtype=np.intp)
 
     __BLOCK_DENSITY = len(__ENCODE_PATH) // 8
 
     __SIGNATURE_DISTANCE_THRESHOLD = 50
-
-    __PATH_X = np.array([x for x, _ in __ENCODE_PATH], dtype=np.intp)
-    __PATH_Y = np.array([y for _, y in __ENCODE_PATH], dtype=np.intp)
 
     def __init__(self, width: int = 32, height: int = 32, amplitude: float = 40, use_reed_solomon: bool = True):
         self.__width = width
@@ -171,47 +255,22 @@ class DCTEncoder(EncoderInterface):
         num_blocks = n // 8
         res = np.empty((n, n), dtype=matrix.dtype)
         block = np.empty((8, 8), dtype=matrix.dtype)
-        # В Numba вложенные циклы компилируются в эффективный машинный код
         for i in range(num_blocks):
             row_offset = i * 8
             for j in range(num_blocks):
                 col_offset = j * 8
-
-                # Извлекаем блок
                 block[:, :] = matrix[row_offset:row_offset + 8, col_offset:col_offset + 8]
-
-                # Матричное умножение DCT: C * Block * C.T
-                # Оператор @ поддерживается Numba
                 res[row_offset:row_offset + 8, col_offset:col_offset + 8] = c @ block @ ct
 
         return res
 
     @staticmethod
     @njit(fastmath=True)
-    def fast_idct_blocks_numba(matrix, c, ct):
-        h = matrix.shape[0]
-        w = matrix.shape[1]
-        num_blocks_h = h // 8
-        num_blocks_w = w // 8
-        res = np.empty((h, w), dtype=matrix.dtype)
-        block = np.empty((8, 8), dtype=matrix.dtype)
-        for i in range(num_blocks_h):
-            row_offset = i * 8
-            for j in range(num_blocks_w):
-                col_offset = j * 8
-                block[:, :] = matrix[row_offset:row_offset + 8, col_offset:col_offset + 8]
-                res[row_offset:row_offset + 8, col_offset:col_offset + 8] = ct @ block @ c
-        return res
-
-    @staticmethod
-    @njit(fastmath=True)
-    def decode_block(y_block: np.ndarray, path_x: np.ndarray, path_y: np.ndarray) -> np.ndarray:
+    def decode_block(y_block: np.ndarray, encode_path: np.ndarray) -> np.ndarray:
         """Преобразует 2 байт в матрицу 8x8 в формате RGB"""
-        # получаем биты
-        # y_mat = self.__dct2d(y_block.astype(np.float32) - 128.0)
         bits = np.empty(24, dtype=np.bool)
-        for i in range(24):
-            bits[i] = y_block[path_x[i], path_y[i]] > 0.0
+        for i, (x, y) in enumerate(encode_path):
+            bits[i] = y_block[x, y] > 0.0
         result = np.empty(3, dtype=np.uint8)
         result[0] = (bits[0] << 7) | (bits[1] << 6) | (bits[2] << 5) | (bits[3] << 4) | (bits[4] << 3) | (
                 bits[5] << 2) | (bits[6] << 1) | (bits[7])
@@ -223,11 +282,11 @@ class DCTEncoder(EncoderInterface):
 
     @staticmethod
     @njit(fastmath=True)
-    def pre_decode(count: int, density: int, y: np.ndarray, path: np.ndarray, path_x, path_y, dcd) -> np.ndarray:
+    def pre_decode(count: int, density: int, y: np.ndarray, path: np.ndarray, encode_path: np.ndarray, dcd) -> np.ndarray:
         result = np.empty((count, density), dtype=np.uint8)
         for i in range(count):
             pos = path[i]
-            result[i] = dcd(y[pos[0] * 8: pos[0] * 8 + 8, pos[1] * 8: pos[1] * 8 + 8], path_x, path_y)
+            result[i] = dcd(y[pos[0] * 8: pos[0] * 8 + 8, pos[1] * 8: pos[1] * 8 + 8], encode_path)
         return result.reshape(count * density)
 
     def encode(self, data: list[bytes]) -> np.ndarray:
@@ -241,35 +300,14 @@ class DCTEncoder(EncoderInterface):
 
         ser = Frame.serialize(data)
         pack = np.frombuffer(self.__RSC.encode(ser) if self.__use_rs else ser, dtype=np.uint8)
+
         if len(pack) % 3 == 1:
             pack = np.pad(pack, (0, 2))
         elif len(pack) % 3 == 2:
             pack = np.pad(pack, (0, 1))
-        pack = pack.reshape((len(pack) // 3, 3))
-        coeffs = np.zeros((self.__width * 8, self.__height * 8), dtype=np.float64)
-        bits = np.unpackbits(pack, axis=1)
-        values = np.where(bits > 0, self.__amplitude, -self.__amplitude).astype(np.float64)
-        for i, pos in enumerate(self.__positions[:len(pack)]):
-            row = pos[0] * 8
-            col = pos[1] * 8
-            block = coeffs[row:row + 8, col:col + 8]
-            block[self.__PATH_X, self.__PATH_Y] = values[i]
 
-        y_plane = DCTEncoder.fast_idct_blocks_numba(coeffs, self.__dct_core, self.__dct_core_t)
-        y_plane = np.clip(y_plane + 128.0, 0, 255).astype(np.uint8)
-
-        result = np.empty((self.__width * 8, self.__height * 8, 3), dtype=np.uint8)
-        result[:, :, 0] = y_plane
-        result[:, :, 1] = y_plane
-        result[:, :, 2] = y_plane
-
-        # сигнатура кадра - 4 квадрата по углам, белый, красный, зеленый и синий
-        result[:8, :8, :] = 255
-        result[-8:, :8, :] = 0
-        result[:8, -8:, :] = 0
-        result[-8:, -8:, :] = 255
-
-        return result
+        return _encode(pack, self.__width, self.__height, self.__amplitude, self.__positions,
+                         self.__ENCODE_PATH,  self.__dct_core,  self.__dct_core_t)
 
     __LT = np.array([255, 255, 255], dtype=np.uint8)
     __RT = np.array([0, 0, 0], dtype=np.uint8)
@@ -293,7 +331,7 @@ class DCTEncoder(EncoderInterface):
         y_plane = DCTEncoder.fast_dct_blocks_numba(y_plane, self.__dct_core, self.__dct_core_t)
 
         raw_data = DCTEncoder.pre_decode(self.__get_total_blocks(), self.__BLOCK_DENSITY, y_plane, self.__positions,
-                                         self.__PATH_X, self.__PATH_Y, DCTEncoder.decode_block)
+                                         self.__ENCODE_PATH, DCTEncoder.decode_block)
 
         # скрывает процесс декодирования кода Рида Соломона от последующих этапов алгоритма
         def get_byte_decoded():
@@ -331,7 +369,7 @@ class DCTEncoder(EncoderInterface):
         return sz - (1 + sz // 255) * 32 if self.__use_rs else sz
 
     def warmup(self):
-        datas = np.empty((1000, 1000), dtype=np.uint8)
+        datas = np.empty((100, 1000), dtype=np.uint8)
         encoded = []
         for data in datas:
             encoded.append(self.encode(data.tobytes()))
