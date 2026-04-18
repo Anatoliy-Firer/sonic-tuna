@@ -22,9 +22,7 @@ const frameQueueLimit = 10;
 const outgoingFrameQueue = [];
 let socket = null;
 
-let color = 'rgb(255 0 0)';
 let emptyFrameAngle = 0.0;
-
 
 const imageData = sourceCtx.createImageData(INPUT_W, INPUT_H);
 const uint32View = new Uint32Array(imageData.data.buffer);
@@ -32,7 +30,7 @@ const uint32View = new Uint32Array(imageData.data.buffer);
 function drawEmptyFrame() {
     const red = Math.round(((Math.cos(emptyFrameAngle) + 1) / 2) * 255);
     const blue = Math.round(((Math.sin(emptyFrameAngle) + 1) / 2) * 255);
-    color = `rgb(${red} 0 ${blue})`;
+    let color = `rgb(${red} 0 ${blue})`;
     emptyFrameAngle += 0.01;
 
     ctx.fillStyle = color;
