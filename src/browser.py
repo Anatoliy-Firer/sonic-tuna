@@ -69,7 +69,7 @@ class Browser(AbstractContextManager):
                 context = await browser.new_context(permissions=['camera', 'microphone'])
 
                 if self.__logging:
-                    context.on("console", lambda msg: logging.log(logging.INFO, msg.text))
+                    context.on("console", lambda msg: logging.log(logging.INFO, f'Browser: {msg.text}'))
 
                 await context.add_init_script(script=camera_bridge_js)
 

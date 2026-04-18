@@ -378,12 +378,13 @@ class DCTEncoder(EncoderInterface):
 if __name__ == "__main__":
     import cv2
 
-    c = DCTEncoder()
+    c = DCTEncoder(amplitude=100, use_reed_solomon=False)
     print(c.max_data_size(1))
-    data = np.random.randint(0, 255, 1000, dtype=np.uint8)
+    data = np.random.randint(0, 255, 2000, dtype=np.uint8)
     encoded = c.encode(data.tobytes())
-
-    cv2.imwrite('result.jpeg', encoded, [int(cv2.IMWRITE_JPEG_QUALITY), 40])
-    img = cv2.imread('result.jpeg', cv2.IMREAD_GRAYSCALE)
-    decoded = c.decode(img)
-    print(np.array_equal(data, np.frombuffer(decoded[0], dtype=np.uint8)))
+    for q in range(100, 0, -10):
+        cv2.imwrite('result.jpeg', encoded, [int(cv2.IMWRITE_JPEG_QUALITY), q])
+        img = cv2.imread('result.jpeg', cv2.IMREAD_GRAYSCALE)
+        decoded = c.decode(img)
+        res = len(decoded) > 0 and np.array_equal(data, np.frombuffer(decoded[0], dtype=np.uint8))
+        print(f'Q = {q}, result = {res}')

@@ -43,9 +43,10 @@ async def main(args: argparse.Namespace):
         level=args.log_level,
         format='[%(asctime)s] [%(levelname)s] %(message)s'
     )
+    logging.info(f'config: {args}')
     width, height = args.frame_size
 
-    browser = Browser(args.port, width, height, args.frame_scale, args.fps, args.call_url, args.username, False)
+    browser = Browser(args.port, width, height, args.frame_scale, args.fps, args.call_url, args.username, True)
     tunnel = Tunnel(args.device, args.mtu)
     websocket = WebSocketServer(width * height, args.port)
 
@@ -53,8 +54,7 @@ async def main(args: argparse.Namespace):
 
     browser_task = asyncio.create_task(browser.start_browser(not args.show_gui))
 
-    logging.info(f'Reed Solomon active: {not args.disable_reed_solomon}')
-    codec = DCTEncoder(width // 8, height // 8, 40, use_reed_solomon=not args.disable_reed_solomon)
+    codec = DCTEncoder(width // 8, height // 8, 127, use_reed_solomon=not args.disable_reed_solomon)
     logging.info('warm-up encoder')
     codec.warmup()
     logging.info('encoder warmed-up')
