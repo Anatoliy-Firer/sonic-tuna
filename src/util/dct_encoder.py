@@ -30,7 +30,7 @@ def _fast_unpack_bits1d(arr: np.ndarray, result: np.ndarray) -> np.ndarray:
 
 @njit(fastmath=True)
 def _fast_unpack_bits(arr: np.ndarray) -> np.ndarray:
-    result = np.empty((arr.shape[0], arr.shape[1] * 8), dtype=np.bool)
+    result = np.empty((arr.shape[0], arr.shape[1] * 8), dtype=np.bool_)
     for i in range(arr.shape[0]):
         _fast_unpack_bits1d(arr[i], result[i])
     return result
@@ -69,15 +69,6 @@ def _fast_idct_blocks_numba(matrix, c, ct):
 
 
 @njit(fastmath=True)
-def _get_luminance(rgb_image):
-    r = rgb_image[:, :, 0]
-    g = rgb_image[:, :, 1]
-    b = rgb_image[:, :, 2]
-
-    return 0.299 * r + 0.587 * g + 0.114 * b - 128.0
-
-
-@njit(fastmath=True)
 def _encode(pack: np.ndarray, width, height, amplitude, positions, encode_path, dct_core, dct_core_t):
     pack = pack.reshape((len(pack) // 3, 3))
     coeffs = np.zeros((width * 8, height * 8), dtype=np.float64)
@@ -92,23 +83,20 @@ def _encode(pack: np.ndarray, width, height, amplitude, positions, encode_path, 
     y_plane = _fast_idct_blocks_numba(coeffs, dct_core, dct_core_t)
     y_plane = np.clip(y_plane + 128.0, 0, 255).astype(np.uint8)
 
-    result = np.empty((width * 8, height * 8, 3), dtype=np.uint8)
-    result[:, :, 0] = y_plane
-    result[:, :, 1] = y_plane
-    result[:, :, 2] = y_plane
+    result = y_plane.copy()
 
     # сигнатура кадра - 4 квадрата по углам
-    result[:8, :8, :] = 255
-    result[-8:, :8, :] = 0
-    result[:8, -8:, :] = 0
-    result[-8:, -8:, :] = 255
+    result[:8, :8] = 255
+    result[-8:, :8] = 0
+    result[:8, -8:] = 0
+    result[-8:, -8:] = 255
     return result
 
 
 @njit(fastmath=True)
 def _decode_block(y_block: np.ndarray, encode_path: np.ndarray) -> np.ndarray:
-    """Преобразует 2 байт в матрицу 8x8 в формате RGB"""
-    bits = np.empty(24, dtype=np.bool)
+    """Преобразует 3 байта из DCT-коэффициентов блока 8x8."""
+    bits = np.empty(24, dtype=np.bool_)
     for i, (x, y) in enumerate(encode_path):
         bits[i] = y_block[x, y] > 0.0
     result = np.empty(3, dtype=np.uint8)
@@ -123,16 +111,18 @@ def _decode_block(y_block: np.ndarray, encode_path: np.ndarray) -> np.ndarray:
 
 @njit(fastmath=True, parallel=True)
 def _fast_dct_blocks_numba(matrix, c, ct):
-    matrix = _get_luminance(matrix)
-    n = matrix.shape[0]
-    num_blocks = n // 8
-    res = np.empty((n, n), dtype=matrix.dtype)
-    for i in prange(num_blocks):
-        block = np.empty((8, 8), dtype=matrix.dtype)
+    centered = matrix.astype(np.float64) - 128.0
+    h = centered.shape[0]
+    w = centered.shape[1]
+    num_blocks_h = h // 8
+    num_blocks_w = w // 8
+    res = np.empty((h, w), dtype=np.float64)
+    for i in prange(num_blocks_h):
+        block = np.empty((8, 8), dtype=np.float64)
         row_offset = i * 8
-        for j in range(num_blocks):
+        for j in range(num_blocks_w):
             col_offset = j * 8
-            block[:, :] = matrix[row_offset:row_offset + 8, col_offset:col_offset + 8]
+            block[:, :] = centered[row_offset:row_offset + 8, col_offset:col_offset + 8]
             res[row_offset:row_offset + 8, col_offset:col_offset + 8] = c @ block @ ct
 
     return res
@@ -310,30 +300,29 @@ class DCTEncoder(EncoderInterface):
         ser = Frame.serialize(data)
         pack = np.frombuffer(self.__RSC.encode(ser) if self.__use_rs else ser, dtype=np.uint8)
 
-        if len(pack) % 3 == 1:
-            pack = np.pad(pack, (0, 2))
-        elif len(pack) % 3 == 2:
-            pack = np.pad(pack, (0, 1))
+        pad = (-len(pack)) % self.__BLOCK_DENSITY
+        if pad > 0:
+            pack = np.pad(pack, (0, pad))
 
         return _encode(pack, self.__width, self.__height, self.__amplitude, self.__positions,
                        self.__ENCODE_PATH, self.__dct_core, self.__dct_core_t)
 
-    __LT = np.array([255, 255, 255], dtype=np.uint8)
-    __RT = np.array([0, 0, 0], dtype=np.uint8)
-    __LB = np.array([0, 0, 0], dtype=np.uint8)
-    __RB = np.array([255, 255, 255], dtype=np.uint8)
+    __LT = np.float64(255.0)
+    __RT = np.float64(0.0)
+    __LB = np.float64(0.0)
+    __RB = np.float64(255.0)
 
     def decode(self, frame: np.ndarray) -> list[bytes]:
         result = []
         # сначала сверяем сигнатуру
-        lt = frame[:7, :7].mean(axis=(0, 1))
-        rt = frame[-7:, :7].mean(axis=(0, 1))
-        lb = frame[:7, -7:].mean(axis=(0, 1))
-        rb = frame[-7:, -7:].mean(axis=(0, 1))
-        if (np.linalg.norm(self.__LT - lt) > self.__SIGNATURE_DISTANCE_THRESHOLD or
-                np.linalg.norm(self.__RT - rt) > self.__SIGNATURE_DISTANCE_THRESHOLD or
-                np.linalg.norm(self.__LB - lb) > self.__SIGNATURE_DISTANCE_THRESHOLD or
-                np.linalg.norm(self.__RB - rb) > self.__SIGNATURE_DISTANCE_THRESHOLD):
+        lt = frame[:7, :7].mean()
+        rt = frame[-7:, :7].mean()
+        lb = frame[:7, -7:].mean()
+        rb = frame[-7:, -7:].mean()
+        if (abs(self.__LT - lt) > self.__SIGNATURE_DISTANCE_THRESHOLD or
+                abs(self.__RT - rt) > self.__SIGNATURE_DISTANCE_THRESHOLD or
+                abs(self.__LB - lb) > self.__SIGNATURE_DISTANCE_THRESHOLD or
+                abs(self.__RB - rb) > self.__SIGNATURE_DISTANCE_THRESHOLD):
             return result
 
         raw_data = _pre_decode(self.__get_total_blocks(), self.__BLOCK_DENSITY, frame, self.__dct_core,
@@ -393,6 +382,6 @@ if __name__ == "__main__":
     encoded = c.encode(data.tobytes())
 
     cv2.imwrite('result.jpeg', encoded, [int(cv2.IMWRITE_JPEG_QUALITY), 50])
-    img = cv2.imread('result.jpeg')
+    img = cv2.imread('result.jpeg', cv2.IMREAD_GRAYSCALE)
     decoded = c.decode(img)
     print(np.array_equal(data, np.frombuffer(decoded[0], dtype=np.uint8)))

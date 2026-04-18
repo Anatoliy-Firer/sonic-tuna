@@ -2,54 +2,32 @@
 
     const SCAN_INTERVAL_MS = 1000;
     const SIGNATURE_DISTANCE_THRESHOLD = 50;
-    const SIGNATURE_LT = [255, 255, 255];
-    const SIGNATURE_RT = [0, 0, 0];
-    const SIGNATURE_LB = [0, 0, 0];
-    const SIGNATURE_RB = [255, 255, 255];
+    const SIGNATURE_LT = 255;
+    const SIGNATURE_RT = 0;
+    const SIGNATURE_LB = 0;
+    const SIGNATURE_RB = 255;
 
-    function fillRgbFromRgba(rgbaBytes, rgbBytes) {
-        if (WIDTH <= 0 || HEIGHT <= 0) {
+    function fillGrayFromRgba(rgbaBytes, grayBytes) {
+        const greenAt = (x, y) => {
+            return rgbaBytes[(y * WIDTH + x) * 4 + 1];
+        };
+
+        const lt = greenAt(0, 0);
+        const rt = greenAt(0, HEIGHT - 1);
+        const lb = greenAt(WIDTH - 1, 0);
+        const rb = greenAt(WIDTH - 1, HEIGHT - 1);
+
+        if (!(Math.abs(lt - SIGNATURE_LT) <= SIGNATURE_DISTANCE_THRESHOLD
+            && Math.abs(rt - SIGNATURE_RT) <= SIGNATURE_DISTANCE_THRESHOLD
+            && Math.abs(lb - SIGNATURE_LB) <= SIGNATURE_DISTANCE_THRESHOLD
+            && Math.abs(rb - SIGNATURE_RB) <= SIGNATURE_DISTANCE_THRESHOLD)) {
             return false;
         }
 
-        for (let y = 0; y < HEIGHT; y += 1) {
-            const rgbaRowOffset = y * WIDTH * 4;
-            const rgbRowOffset = y * WIDTH * 3;
-
-            for (let x = 0; x < WIDTH; x += 1) {
-                const src = rgbaRowOffset + x * 4;
-                const dst = rgbRowOffset + x * 3;
-                const red = rgbaBytes[src];
-                const green = rgbaBytes[src + 1];
-                const blue = rgbaBytes[src + 2];
-
-                rgbBytes[dst] = red;
-                rgbBytes[dst + 1] = green;
-                rgbBytes[dst + 2] = blue;
-            }
+        for (let i = 0; i < grayBytes.length; i += 1) {
+            grayBytes[i] = rgbaBytes[i * 4 + 1];
         }
-
-        const pixelAt = (x, y) => {
-            const src = (y * WIDTH + x) * 4;
-            return [rgbaBytes[src], rgbaBytes[src + 1], rgbaBytes[src + 2]];
-        };
-
-        const distance = (actual, expected) => {
-            const dR = expected[0] - actual[0];
-            const dG = expected[1] - actual[1];
-            const dB = expected[2] - actual[2];
-            return Math.hypot(dR, dG, dB);
-        };
-
-        const lt = pixelAt(0, 0);
-        const rt = pixelAt(0, HEIGHT - 1);
-        const lb = pixelAt(WIDTH - 1, 0);
-        const rb = pixelAt(WIDTH - 1, HEIGHT - 1);
-
-        return distance(lt, SIGNATURE_LT) <= SIGNATURE_DISTANCE_THRESHOLD
-            && distance(rt, SIGNATURE_RT) <= SIGNATURE_DISTANCE_THRESHOLD
-            && distance(lb, SIGNATURE_LB) <= SIGNATURE_DISTANCE_THRESHOLD
-            && distance(rb, SIGNATURE_RB) <= SIGNATURE_DISTANCE_THRESHOLD;
+        return true;
     }
 
     function getRemoteVideoEntries() {
@@ -98,7 +76,7 @@
         const canvas = new OffscreenCanvas(WIDTH, HEIGHT);
         const ctx = canvas.getContext("2d", {willReadFrequently: true});
         ctx.imageSmoothingEnabled = false;
-        const rgbBytes = new Uint8Array(WIDTH * HEIGHT * 3);
+        const grayBytes = new Uint8Array(WIDTH * HEIGHT);
 
         const stopReader = async () => {
             try {
@@ -121,10 +99,10 @@
             try {
                 ctx.drawImage(frame, 0, 0, WIDTH, HEIGHT);
                 const rgbaBytes = ctx.getImageData(0, 0, WIDTH, HEIGHT).data;
-                if (!fillRgbFromRgba(rgbaBytes, rgbBytes)) {
+                if (!fillGrayFromRgba(rgbaBytes, grayBytes)) {
                     continue;
                 }
-                frameBridge.sendFrame(rgbBytes);
+                frameBridge.sendFrame(grayBytes);
             } finally {
                 frame.close();
             }

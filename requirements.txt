@@ -3,7 +3,6 @@ NumPy
 playwright
 uvloop
 opencv-python-headless
-reedsolo
 PyYAML
 numba
 scipy

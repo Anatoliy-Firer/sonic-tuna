@@ -1,7 +1,6 @@
 import argparse
 import asyncio
 import logging
-import struct
 from asyncio import CancelledError
 
 import numpy as np
@@ -13,8 +12,6 @@ from src.tun import Tunnel
 from src.util.batch_generator import chunk_from_queue
 from src.util.dct_encoder import DCTEncoder, EncoderInterface
 from src.ws_server import WebSocketServer
-
-_PACKET_SIZE = struct.Struct("I")
 
 
 async def tun_to_ws(tunnel: Tunnel, ws: WebSocketServer, fps: int, codec: EncoderInterface):
@@ -30,7 +27,7 @@ async def tun_to_ws(tunnel: Tunnel, ws: WebSocketServer, fps: int, codec: Encode
 async def ws_to_tun(tunnel: Tunnel, ws: WebSocketServer, codec: EncoderInterface):
     w, h = codec.image_size()
     async for frame in ws.frames():
-        decoded = codec.decode(np.frombuffer(frame, dtype=np.uint8).reshape((w, h, 3)))
+        decoded = codec.decode(np.frombuffer(frame, dtype=np.uint8).reshape((w, h)))
         for pack in decoded:
             try:
                 tunnel.push_package(pack)
@@ -48,9 +45,9 @@ async def main(args: argparse.Namespace):
     )
     width, height = args.frame_size
 
-    browser = Browser(args.port, width, height, args.frame_scale, args.fps, args.call_url, args.username)
+    browser = Browser(args.port, width, height, args.frame_scale, args.fps, args.call_url, args.username, True)
     tunnel = Tunnel(args.device, args.mtu)
-    websocket = WebSocketServer(width * height * 3, args.port)
+    websocket = WebSocketServer(width * height, args.port)
 
     ws_server = asyncio.create_task(websocket.start())
 
