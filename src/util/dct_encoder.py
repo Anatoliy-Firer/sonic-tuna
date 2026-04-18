@@ -72,18 +72,20 @@ def _fast_idct_blocks_numba(matrix, c, ct):
 def _encode(pack: np.ndarray, width, height, amplitude, positions, encode_path, dct_core, dct_core_t):
     pack = pack.reshape((len(pack) // 3, 3))
     coeffs = np.zeros((width * 8, height * 8), dtype=np.float64)
+    for y in range(height):
+        for x in range(width):
+            coeffs[y * 8, x * 8] = -1024.0
     bits = _fast_unpack_bits(pack)
     values = np.where(bits > 0, amplitude, -amplitude).astype(np.float64)
     for i, pos in enumerate(positions[:len(pack)]):
         row = pos[0] * 8
         col = pos[1] * 8
+        coeffs[row, col] = 0
         for j, (x, y) in enumerate(encode_path):
             coeffs[row + x, col + y] = values[i][j]
 
-    y_plane = _fast_idct_blocks_numba(coeffs, dct_core, dct_core_t)
-    y_plane = np.clip(y_plane + 128.0, 0, 255).astype(np.uint8)
-
-    result = y_plane.copy()
+    result = _fast_idct_blocks_numba(coeffs, dct_core, dct_core_t)
+    result = np.clip(result + 128.0, 0, 255).astype(np.uint8)
 
     # сигнатура кадра - 4 квадрата по углам
     result[:8, :8] = 255
@@ -381,7 +383,7 @@ if __name__ == "__main__":
     data = np.random.randint(0, 255, 1000, dtype=np.uint8)
     encoded = c.encode(data.tobytes())
 
-    cv2.imwrite('result.jpeg', encoded, [int(cv2.IMWRITE_JPEG_QUALITY), 50])
+    cv2.imwrite('result.jpeg', encoded, [int(cv2.IMWRITE_JPEG_QUALITY), 40])
     img = cv2.imread('result.jpeg', cv2.IMREAD_GRAYSCALE)
     decoded = c.decode(img)
     print(np.array_equal(data, np.frombuffer(decoded[0], dtype=np.uint8)))
