@@ -137,7 +137,7 @@ class Browser(AbstractContextManager):
         await page.goto(self.__call_url)
 
         try:
-            but_allow = page.get_by_text("Settings")
+            but_allow = page.get_by_label("Settings")
             await but_allow.wait_for(timeout=10000)
             await but_allow.click()
             input_language = page.locator('input[id="plasma-uniq-id-43"]')
