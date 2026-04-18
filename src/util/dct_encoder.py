@@ -378,7 +378,7 @@ class DCTEncoder(EncoderInterface):
 if __name__ == "__main__":
     import cv2
 
-    c = DCTEncoder(amplitude=100, use_reed_solomon=False)
+    c = DCTEncoder(amplitude=127, use_reed_solomon=False)
     print(c.max_data_size(1))
     data = np.random.randint(0, 255, 2000, dtype=np.uint8)
     encoded = c.encode(data.tobytes())

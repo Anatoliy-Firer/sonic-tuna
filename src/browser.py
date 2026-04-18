@@ -137,11 +137,17 @@ class Browser(AbstractContextManager):
         await page.goto(self.__call_url)
 
         try:
-            but_allow = page.get_by_text("Разрешить")
+            but_allow = page.get_by_text("Settings")
             await but_allow.wait_for(timeout=3000)
             await but_allow.click()
+            input_language = page.locator('input[id="plasma-uniq-id-43"]')
+            await input_language.wait_for(timeout=3000)
+            await input_language.fill("Русский")
+            but_close = page.get_by_label("Закрыть")
+            await but_close.wait_for()
+            await but_close.click()
         except TimeoutError:
-            logging.info('Button "Разрешить" not found. Continue')
+            logging.info('Failed to change language. Continue')
 
         try:
             input_user = page.locator('input[id="plasma-uniq-id-15"]')
