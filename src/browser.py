@@ -77,7 +77,7 @@ class Browser(AbstractContextManager):
 
                 page = await context.new_page()
 
-                await self.__work_with_page(page)
+                await self.__openSaluteJazz(page)
                 logging.info("Browser successfully started")
                 await asyncio.Event().wait()  # держим браузер живым
             except Exception as e:
@@ -94,7 +94,7 @@ class Browser(AbstractContextManager):
                     with contextlib.suppress(Exception):
                         await browser.close()
 
-    async def __work_with_page(self, page: Page):
+    async def __openYandexTelemost(self, page: Page):
         with open('src/input_cameras.js', 'r') as fin:
             rtc_client_js = fin.read()
 
@@ -127,6 +127,50 @@ class Browser(AbstractContextManager):
         but_connect = page.get_by_text("Подключиться")
         await but_connect.wait_for()
         await but_connect.click()
+
+        await page.evaluate(rtc_client_js, [self.__frame_w, self.__frame_h])
+
+    async def __openSaluteJazz(self, page: Page):
+        with open('src/input_cameras.js', 'r') as fin:
+            rtc_client_js = fin.read()
+
+        await page.goto(self.__call_url)
+
+        try:
+            but_allow = page.get_by_text("Разрешить")
+            await but_allow.wait_for(timeout=3000)
+            await but_allow.click()
+        except TimeoutError:
+            logging.info('Button "Разрешить" not found. Continue')
+
+        try:
+            input_user = page.locator('input[id="plasma-uniq-id-15"]')
+            await input_user.wait_for(timeout=3000)
+            await input_user.fill(self.__user)
+        except TimeoutError:
+            logging.info('Failed to set nickname. Continue')
+
+        but_connect = page.get_by_text("Подключиться")
+        await but_connect.wait_for()
+        await but_connect.click()
+
+        but_view = page.get_by_label("Вид")
+        await but_view.wait_for()
+        await but_view.click()
+        but_pane = page.get_by_text("Плитка")
+        await but_pane.wait_for()
+        await but_pane.click()
+
+        but_mic = page.get_by_label("Включить камеру")
+        await but_mic.wait_for()
+        await but_mic.click()
+
+        try:
+            but_allow = page.get_by_text("Не показывать")
+            await but_allow.wait_for(timeout=3000)
+            await but_allow.click()
+        except TimeoutError:
+            logging.info('Button "Не показывать" not found. Continue')
 
         await page.evaluate(rtc_client_js, [self.__frame_w, self.__frame_h])
 
