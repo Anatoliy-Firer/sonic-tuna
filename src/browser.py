@@ -138,10 +138,10 @@ class Browser(AbstractContextManager):
 
         try:
             but_allow = page.get_by_text("Settings")
-            await but_allow.wait_for(timeout=3000)
+            await but_allow.wait_for(timeout=10000)
             await but_allow.click()
             input_language = page.locator('input[id="plasma-uniq-id-43"]')
-            await input_language.wait_for(timeout=3000)
+            await input_language.wait_for()
             await input_language.fill("Русский")
             but_close = page.get_by_label("Закрыть")
             await but_close.wait_for()
