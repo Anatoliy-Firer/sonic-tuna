@@ -45,7 +45,7 @@ async def main(args: argparse.Namespace):
     )
     width, height = args.frame_size
 
-    browser = Browser(args.port, width, height, args.frame_scale, args.fps, args.call_url, args.username, True)
+    browser = Browser(args.port, width, height, args.frame_scale, args.fps, args.call_url, args.username, False)
     tunnel = Tunnel(args.device, args.mtu)
     websocket = WebSocketServer(width * height, args.port)
 
