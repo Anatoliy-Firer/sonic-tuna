@@ -137,13 +137,13 @@ class Browser(AbstractContextManager):
         await page.goto(self.__call_url)
 
         try:
-            but_allow = page.get_by_label("Settings")
+            but_allow = page.get_by_label("Settings", exact=True)
             await but_allow.wait_for(timeout=10000)
             await but_allow.click()
             input_language = page.locator('input[id="plasma-uniq-id-43"]')
             await input_language.wait_for()
             await input_language.fill("Русский")
-            but_close = page.get_by_label("Закрыть")
+            but_close = page.get_by_label("Закрыть", exact=True)
             await but_close.wait_for()
             await but_close.click()
         except TimeoutError:
@@ -160,14 +160,14 @@ class Browser(AbstractContextManager):
         await but_connect.wait_for()
         await but_connect.click()
 
-        but_view = page.get_by_label("Вид")
+        but_view = page.get_by_label("Вид", exact=True)
         await but_view.wait_for()
         await but_view.click()
         but_pane = page.get_by_text("Плитка")
         await but_pane.wait_for()
         await but_pane.click()
 
-        but_mic = page.get_by_label("Включить камеру")
+        but_mic = page.get_by_label("Включить камеру", exact=True)
         await but_mic.wait_for()
         await but_mic.click()
 
