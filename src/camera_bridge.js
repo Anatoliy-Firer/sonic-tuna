@@ -51,10 +51,10 @@ function drawFrame(grayBytes) {
     sourceCtx.putImageData(imageData, 0, 0);
     ctx.drawImage(sourceCanvas, 0, 0, WIDTH, HEIGHT);
     ctx.fillStyle = '#000'; // двойная отправка кадра, чтобы сформировать на принимающей стороне более устойчивое изображение
-    sourceCtx.fillRect(0,0,8,8);
+    ctx.fillRect(0,0,8,8);
     videoTrack.requestFrame?.();
     ctx.fillStyle = '#fff';
-    sourceCtx.fillRect(0,0,8,8);
+    ctx.fillRect(0,0,8,8);
     videoTrack.requestFrame?.();
 }
 
