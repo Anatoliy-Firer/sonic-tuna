@@ -3,7 +3,7 @@ const HEIGHT = INPUT_H * SCALE_FACTOR;
 
 const sourceCanvas = new OffscreenCanvas(INPUT_W, INPUT_H);
 const FRAME_INTERVAL_MS = 2000 / FPS;
-const MAX_OUTGOING_FRAMES = 10;
+const MAX_OUTGOING_FRAMES = 20;
 
 const canvas = document.createElement("canvas");
 canvas.width = WIDTH;
