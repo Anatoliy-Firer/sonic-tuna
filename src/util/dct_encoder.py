@@ -74,7 +74,7 @@ def _encode(pack: np.ndarray, width, height, amplitude, positions, encode_path, 
     coeffs = np.zeros((width * 8, height * 8), dtype=np.float64)
     for y in range(height):
         for x in range(width):
-            coeffs[x * 8, y * 8] = -1024.0
+            coeffs[x * 8, y * 8] = -1023.0
     bits = _fast_unpack_bits(pack)
     values = np.where(bits > 0, amplitude, -amplitude).astype(np.float64)
     for i, pos in enumerate(positions[:len(pack)]):
