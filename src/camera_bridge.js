@@ -1,15 +1,11 @@
 const WIDTH = INPUT_W * SCALE_FACTOR;
 const HEIGHT = INPUT_H * SCALE_FACTOR;
 
-const sourceCanvas = document.createElement("canvas");
-sourceCanvas.width = INPUT_W;
-sourceCanvas.height = INPUT_H;
+const sourceCanvas = new OffscreenCanvas(INPUT_W, INPUT_H);
 const FRAME_INTERVAL_MS = 1000 / FPS;
 const MAX_OUTGOING_FRAMES = 10;
 
-const canvas = document.createElement("canvas");
-canvas.width = WIDTH;
-canvas.height = HEIGHT;
+const canvas = new OffscreenCanvas(WIDTH, HEIGHT);
 
 const ctx = canvas.getContext("2d", {alpha: false});
 const sourceCtx = sourceCanvas.getContext("2d", {alpha: false});
@@ -52,6 +48,11 @@ function drawFrame(grayBytes) {
 
     sourceCtx.putImageData(imageData, 0, 0);
     ctx.drawImage(sourceCanvas, 0, 0, WIDTH, HEIGHT);
+    ctx.fillStyle = '#000'; // двойная отправка кадра, чтобы сформировать на принимающей стороне более устойчивое изображение
+    sourceCtx.fillRect(0,0,8,8)
+    videoTrack.requestFrame?.();
+    ctx.fillStyle = '#fff';
+    sourceCtx.fillRect(0,0,8,8)
     videoTrack.requestFrame?.();
 }
 

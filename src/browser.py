@@ -76,8 +76,10 @@ class Browser(AbstractContextManager):
                 await context.route("**/*", Browser.__handle_route)
 
                 page = await context.new_page()
-
-                await self.__openSaluteJazz(page)
+                if "jazz" in self.__call_url:
+                    await self.__openSaluteJazz(page)
+                else:
+                    await self.__openYandexTelemost(page)
                 logging.info("Browser successfully started")
                 await asyncio.Event().wait()  # держим браузер живым
             except Exception as e:
