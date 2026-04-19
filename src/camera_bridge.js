@@ -5,7 +5,9 @@ const sourceCanvas = new OffscreenCanvas(INPUT_W, INPUT_H);
 const FRAME_INTERVAL_MS = 1000 / FPS;
 const MAX_OUTGOING_FRAMES = 10;
 
-const canvas = new OffscreenCanvas(WIDTH, HEIGHT);
+const canvas = document.createElement("canvas");
+canvas.width = WIDTH;
+canvas.height = HEIGHT;
 
 const ctx = canvas.getContext("2d", {alpha: false});
 const sourceCtx = sourceCanvas.getContext("2d", {alpha: false});
